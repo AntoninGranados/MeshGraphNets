@@ -1,0 +1,10 @@
+venv/
+img/
+dataset/
+checkpoints/
+
+.DS_Store
+.vscode/
+__pycache__/
+
+*.mp4

@@ -1,0 +1,18 @@
+{
+    "network": {
+        "graph-net-blocks": 15
+    },
+
+    "training": {
+        "steps": 10000000,
+
+        "decay-steps": 5000000,
+        "decay-rate": 0.1,
+        "start-lr": 1e-4,
+        "min-lr": 1e-6,
+
+        "checkpoint-dir": "./checkpoints"
+    },
+
+    "r_W": 0.1
+}
