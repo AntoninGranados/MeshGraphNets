@@ -1,6 +1,5 @@
 import torch
 
-
 class Normalizer(torch.nn.Module):
     def __init__(self, device: torch.device, size: int, std_epsilon: float = 1e-6, max_accumulation: int = int(1e5)):
         super().__init__()

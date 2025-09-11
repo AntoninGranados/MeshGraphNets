@@ -6,7 +6,7 @@ from collections import namedtuple
 Mesh = dict[str, torch.Tensor]
 
 EdgeSet = namedtuple("EdgeSet", ["name", "edge_features", "senders", "receivers"])
-Graph = namedtuple("Graph", ["node_features", "edge_sets"])
+MultiGraph = namedtuple("Graph", ["node_features", "edge_sets"])
 
 # TODO: fix the dataset to only use the node types we need
 class NodeType(IntEnum):
@@ -42,4 +42,42 @@ def cells_to_edges(mesh: Mesh) -> torch.Tensor:
         torch.stack([nodes_a, nodes_b]),
         torch.stack([nodes_b, nodes_a])
         ], dim=-1
+    )
+
+def generate_graph(mesh: Mesh) -> MultiGraph:
+    # compute node features
+    velocities = torch.subtract(mesh["world_pos"], mesh["prev|world_pos"])
+    types = torch.nn.functional.one_hot(mesh["node_type"].squeeze(-1).type(torch.long), NodeType.COUNT)
+    node_features = torch.concat([
+        velocities,
+        types
+    ], dim=-1)
+    
+    # compute mesh edge sets
+    edges = cells_to_edges(mesh)
+    senders, receivers = edges[0,:], edges[1,:]
+
+    rel_world_pos = (torch.index_select(mesh["world_pos"], 1, senders) -
+                        torch.index_select(mesh["world_pos"], 1, receivers))
+    rel_mesh_pos = (torch.index_select(mesh["mesh_pos"], 1, senders) -
+                        torch.index_select(mesh["mesh_pos"], 1, receivers))
+    mesh_edge_features = torch.concat([
+        rel_world_pos,
+        torch.norm(rel_world_pos, dim=-1, keepdim=True),
+        rel_mesh_pos,
+        torch.norm(rel_mesh_pos, dim=-1, keepdim=True),
+    ], dim=-1)
+
+    mesh_edge_set = EdgeSet(
+        name="mesh",
+        edge_features=mesh_edge_features,
+        senders=senders,
+        receivers=receivers
+    )
+
+    return MultiGraph(
+        node_features=node_features,
+        edge_sets=[
+            mesh_edge_set
+        ]
     )

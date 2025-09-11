@@ -1,6 +1,6 @@
 import torch
 
-from graph import NodeType, EdgeSet, Graph
+from graph import NodeType, EdgeSet, MultiGraph
 
 def make_linear(input_size: int, output_size: int) -> torch.nn.Linear:
     linear = torch.nn.Linear(input_size, output_size)
@@ -25,7 +25,6 @@ def make_mlp(input_size: int, output_size: int, layer_norm: bool = True) -> torc
     return torch.nn.Sequential(*layers)
 
 
-
 class Encoder(torch.nn.Module):
     def __init__(self, latent_size: int = 128):
         super().__init__()
@@ -35,7 +34,7 @@ class Encoder(torch.nn.Module):
             # "world": make_mlp(input_size=3 + 1, output_size=latent_size)          # x_ij, |x_ij|
         })
 
-    def __call__(self, graph: Graph) -> Graph:
+    def __call__(self, graph: MultiGraph) -> MultiGraph:
         latent_nodes = self.node_encoder(graph.node_features)
 
         edge_sets = []
@@ -45,14 +44,14 @@ class Encoder(torch.nn.Module):
                 edge_features=latent
             ))
 
-        return Graph(latent_nodes, edge_sets)
+        return MultiGraph(latent_nodes, edge_sets)
 
 class Decoder(torch.nn.Module):
     def __init__(self, output_size: int, latent_size: int = 128):
         super().__init__()
         self.node_decoder = make_mlp(input_size=latent_size, output_size=output_size, layer_norm=False)
 
-    def __call__(self, latent_graph: Graph) -> torch.Tensor:
+    def __call__(self, latent_graph: MultiGraph) -> torch.Tensor:
         decoded_features = self.node_decoder(latent_graph.node_features)
         return decoded_features
 
@@ -85,7 +84,7 @@ class GraphNetBlock(torch.nn.Module):
 
         return self.node_mlp(torch.concat(features, dim=-1))
 
-    def __call__(self, graph: Graph) -> Graph:
+    def __call__(self, graph: MultiGraph) -> MultiGraph:
         new_edge_sets = []
         for edge_set in graph.edge_sets:
             new_features = self.__update_edge_features(graph.node_features, edge_set)
@@ -99,4 +98,4 @@ class GraphNetBlock(torch.nn.Module):
             new._replace(edge_features=new.edge_features + old.edge_features) for new, old in zip(new_edge_sets, graph.edge_sets)
         ]
 
-        return Graph(new_node_features, new_edge_sets)
+        return MultiGraph(new_node_features, new_edge_sets)

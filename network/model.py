@@ -1,11 +1,10 @@
 import torch
 
-from copy import deepcopy
 from typing import Any
 
-from graph import Mesh, NodeType, EdgeSet, Graph, cells_to_edges
-from normalizer import Normalizer
-from core import Encoder, GraphNetBlock, Decoder
+from graph import Mesh, NodeType, EdgeSet, MultiGraph, generate_graph
+from network.normalizer import Normalizer
+from network.core import Encoder, GraphNetBlock, Decoder
 
 class Model(torch.nn.Module):
     def __init__(self, device: torch.device, graph_net_blocks_count: int = 15):
@@ -24,48 +23,26 @@ class Model(torch.nn.Module):
 
         self.loss_fn = torch.nn.MSELoss()
 
-    def __generate_graph(self, mesh: Mesh, is_training: bool) -> Graph:
-        # compute node features
-        velocities = torch.subtract(mesh["world_pos"], mesh["prev|world_pos"])
-        types = torch.nn.functional.one_hot(mesh["node_type"].squeeze(-1).type(torch.long), NodeType.COUNT)
-        node_features = torch.concat([
-            velocities,
-            types
-        ], dim=-1)
-        node_features = self.node_normalizer(node_features, is_training)
-        
-        # compute mesh edge sets
-        edges = cells_to_edges(mesh)
-        senders, receivers = edges[0,:], edges[1,:]
-
-        rel_world_pos = (torch.index_select(mesh["world_pos"], 1, senders) -
-                          torch.index_select(mesh["world_pos"], 1, receivers))
-        rel_mesh_pos = (torch.index_select(mesh["mesh_pos"], 1, senders) -
-                            torch.index_select(mesh["mesh_pos"], 1, receivers))
-        mesh_edge_features = torch.concat([
-            rel_world_pos,
-            torch.norm(rel_world_pos, dim=-1, keepdim=True),
-            rel_mesh_pos,
-            torch.norm(rel_mesh_pos, dim=-1, keepdim=True),
-        ], dim=-1)
-        mesh_edge_features = self.edge_normalizer["mesh"](mesh_edge_features, is_training)
-
-        mesh_edge_set = EdgeSet(
-            name="mesh",
-            edge_features=mesh_edge_features,
-            senders=senders,
-            receivers=receivers
+    def __normalize_graph(self, graph: MultiGraph, is_training: bool) -> MultiGraph:
+        graph = graph._replace(
+            node_features = self.node_normalizer(graph.node_features, is_training)
         )
 
-        return Graph(
-            node_features=node_features,
-            edge_sets=[
-                mesh_edge_set
-            ]
+        normalized_edge_sets = [
+            edge_set._replace(
+                edge_features = self.edge_normalizer[edge_set.name](edge_set.edge_features, is_training)
+            ) for edge_set in graph.edge_sets
+        ]
+
+        graph = graph._replace(
+            edge_sets = normalized_edge_sets
         )
+
+        return graph
     
     def __forward_pass(self, input: Mesh, is_training: bool) -> torch.Tensor:
-        graph = self.__generate_graph(input, is_training)
+        graph = generate_graph(input)
+        graph = self.__normalize_graph(graph, is_training)
         latent_graph = self.encoder(graph)
         for graph_net_block in self.graph_net_blocks:
             latent_graph = graph_net_block(latent_graph)

@@ -11,8 +11,8 @@ import sys
 from typing import Any
 
 from dataset import Dataset, move_batch_to
-from display import display_trajectory, display_prediction_target, display_trajectory_list
-from model import Model
+from display.trajectory import display_trajectory, display_prediction_target, display_trajectory_list
+from network.model import Model
 
 def get_device() -> torch.device:
     from sys import platform
