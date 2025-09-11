@@ -2,7 +2,6 @@ from torch.utils.data import DataLoader
 import torch
 
 import numpy as np
-import matplotlib.pyplot as plt
 
 import json
 from pathlib import Path
@@ -12,7 +11,7 @@ import sys
 from typing import Any
 
 from dataset import Dataset, move_batch_to
-from display import display_trajectory, display_prediction_target
+from display import display_trajectory, display_prediction_target, display_trajectory_list
 from model import Model
 
 def get_device() -> torch.device:
@@ -123,7 +122,6 @@ def train(device: torch.device, hyper: dict[str, Any]) -> None:
             loop.set_postfix({"loss": f"{loss_sum/(it+1):.6f}"})
     
         train_loss.append(loss_sum/it)
-        np.savetxt(Path(hyper["training"]["checkpoint-dir"], "loss.txt"), train_loss)
 
         # compute validation loss
         model.eval()
@@ -138,7 +136,6 @@ def train(device: torch.device, hyper: dict[str, Any]) -> None:
             loop.set_postfix({"loss": f"{loss_sum/it:.6f}"})
 
         valid_loss.append(loss_sum/it)
-        np.savetxt(Path(hyper["training"]["checkpoint-dir"], "validation_loss.txt"), valid_loss)
 
         # save the model
         torch.save({
@@ -147,37 +144,52 @@ def train(device: torch.device, hyper: dict[str, Any]) -> None:
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
         }, Path(hyper["training"]["checkpoint-dir"], f"mgn_{e:0>4}.pt"))
+        np.savetxt(Path(hyper["training"]["checkpoint-dir"], "loss.txt"), train_loss)
+        np.savetxt(Path(hyper["training"]["checkpoint-dir"], "validation_loss.txt"), valid_loss)
         
         print()
 
-def rollout(device: torch.device, hyper: dict[str, Any], checkpoint: int|None = None, test_set: str = "valid", test_idx: int = 0) -> None:
+def rollout(device: torch.device, hyper: dict[str, Any], checkpoints: list[int|None] = [None], test_set: str = "valid", test_idx: int = 0) -> None:
     ds = Dataset(Path("dataset", "flag_minimal"), stage=test_set)
     
-    model, _, _, _, _, _ = init_from_checkpoint(device, hyper, checkpoint)
-    model.eval()
+    models = []
+    for checkpoint in checkpoints:
+        model, _, _, _, _, _ = init_from_checkpoint(device, hyper, checkpoint)
+        model.eval()
+        models.append(model)
 
     # rollout
     mesh = ds[test_idx*399]
-    pred_mesh = {k: v.unsqueeze(0) for k,v in mesh.items()}
+
+    pred_meshs = [
+        {k: v.unsqueeze(0) for k,v in mesh.items()}
+        for _ in range(len(models))
+    ]
     targ_mesh = {k: v.unsqueeze(0) for k,v in mesh.items()}
     
-    max_frame = 399
-    prev_mesh = {k: v.clone() for k,v in pred_mesh.items()}
+    max_frame = 100
+    prev_meshs = [
+        {k: v.clone() for k,v in pred_mesh.items()}
+        for pred_mesh in pred_meshs
+    ]
     for i in tqdm(range(1, max_frame), file=sys.stdout):
-        current_mesh = move_batch_to(prev_mesh, device)
-        with torch.no_grad():
-            pred_mesh_i = model(current_mesh, ds.meta)
+        for m in range(len(models)):
+            current_mesh = move_batch_to(prev_meshs[m], device)
+            with torch.no_grad():
+                pred_mesh_i = models[m](current_mesh, ds.meta)
 
-        mesh_i_cpu = {k: v.cpu() for k,v in pred_mesh_i.items()}
-        pred_mesh = {k: torch.concat([v, mesh_i_cpu[k]], dim=0) for k,v in pred_mesh.items()}
+            mesh_i_cpu = {k: v.cpu() for k,v in pred_mesh_i.items()}
+            pred_meshs[m] = {k: torch.concat([v, mesh_i_cpu[k]], dim=0) for k,v in pred_meshs[m].items()}
+
+            prev_meshs[m] = mesh_i_cpu
 
         targ_mesh_i = {k: v.unsqueeze(0) for k,v in ds[test_idx*399+i].items()}
         targ_mesh = {k: torch.concat([v, targ_mesh_i[k]], dim=0) for k,v in targ_mesh.items()}
         
-        prev_mesh = mesh_i_cpu
     
-    # display_trajectory(pred_mesh, ds.meta, max_frame=None, title="First flag")
-    display_prediction_target(pred_mesh, targ_mesh, ds.meta, max_frame=max_frame, title="Comparaison", save_fig=True, save_path=Path("img"))
+    # display_trajectory(pred_meshs[0], ds.meta, max_frame=None, title="Flag Simple")
+    display_prediction_target(pred_meshs[0], targ_mesh, ds.meta, title="Flag Simple", save=False, save_path=Path("img"))
+    # display_trajectory_list([*pred_meshs, targ_mesh], [*[f"Pred {ck}" for ck in checkpoints], "Target"], ds.meta, "Flag Simple", save=False, save_path=Path("img"))
 
 if __name__ == "__main__":
     print(f"PyTorch version : {torch.__version__}")
@@ -189,5 +201,5 @@ if __name__ == "__main__":
         hyper = json.loads(file.read())
 
     # train(device, hyper)
-    rollout(device, hyper, None, test_set="valid", test_idx=0)
+    rollout(device, hyper, [None], test_set="valid", test_idx=0)
     

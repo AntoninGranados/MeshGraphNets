@@ -6,8 +6,7 @@ from pathlib import Path
 
 from graph import NodeType, Mesh
 
-
-def display_trajectory(data: Mesh, meta: dict, max_frame: int|None = None, title: str = "", save_fig: bool = False, save_path: Path|str = "") -> None:
+def display_trajectory(data: Mesh, meta: dict, max_frame: int|None = None, title: str = "", save: bool = False, save_path: Path|str = "") -> None:
     def get_np(tensor: torch.Tensor) -> np.ndarray:
         """removes batch dimension if there is one and converts to numpy array"""
         if len(tensor.shape) > 3:
@@ -49,59 +48,50 @@ def display_trajectory(data: Mesh, meta: dict, max_frame: int|None = None, title
         
         plt.pause(meta["dt"])
 
-        if save_fig:
+        if save:
             plt.savefig(Path(save_path, f"frame_{i:03}.png"), dpi=500)
     
     plt.close()
 
-def display_prediction_target(pred: Mesh, targ: Mesh, meta: dict, max_frame: int|None = None, title: str = "", save_fig: bool = False, save_path: Path|str = "") -> None:
+def display_trajectory_list(meshes: list[Mesh], names: list[str], meta: dict, title: str = "", save: bool = False, save_path: Path|str = "") -> None:
     def get_np(tensor: torch.Tensor) -> np.ndarray:
         """removes batch dimension if there is one and converts to numpy array"""
         if len(tensor.shape) > 3:
             return tensor[0].detach().cpu().numpy()
         return tensor.detach().cpu().numpy()
-    
-    pred_world_pos: np.ndarray = get_np(pred["world_pos"])
-    targ_world_pos: np.ndarray = get_np(targ["world_pos"])
 
-    pred_triangles = get_np(pred["cells"])[0]
-    targ_triangles = get_np(targ["cells"])[0]
-
-    # assumes the same number of frames
-    frame_count = pred_world_pos.shape[0] if max_frame is None else min(pred_world_pos.shape[0], max_frame)
+    world_pos = np.array([get_np(mesh["world_pos"]) for mesh in meshes])
+    triangles = np.array([get_np(mesh["cells"])[0] for mesh in meshes])
 
     plt.style.use('dark_background')
-    fig = plt.figure()
-    ax1 = fig.add_subplot(121, projection='3d')
-    ax2 = fig.add_subplot(122, projection='3d')
-    for i in range(frame_count):
-        ax1.cla()
-        ax1.plot_trisurf(pred_world_pos[i,:,0], pred_world_pos[i,:,1], pred_world_pos[i,:,2], triangles=pred_triangles)
-        ax1.set_xlim(np.min(pred_world_pos[:,:,0]), np.max(pred_world_pos[:,:,0]))
-        ax1.set_ylim(np.min(pred_world_pos[:,:,1]), np.max(pred_world_pos[:,:,1]))
-        ax1.set_zlim(np.min(pred_world_pos[:,:,2]), np.max(pred_world_pos[:,:,2]))
-        ax1.set_axis_off()
-        ax1.set_title("Prediction")
-        ax1.patch.set_edgecolor("w")
-        ax1.patch.set_linewidth(1)
+    fig, axs = plt.subplots(1, len(meshes), subplot_kw=dict(projection='3d'))
+    fig.set_size_inches((3*len(meshes), 4))
 
-        ax2.cla()
-        ax2.plot_trisurf(targ_world_pos[i,:,0], targ_world_pos[i,:,1], targ_world_pos[i,:,2], triangles=targ_triangles)
-        ax2.set_xlim(np.min(targ_world_pos[:,:,0]), np.max(targ_world_pos[:,:,0]))
-        ax2.set_ylim(np.min(targ_world_pos[:,:,1]), np.max(targ_world_pos[:,:,1]))
-        ax2.set_zlim(np.min(targ_world_pos[:,:,2]), np.max(targ_world_pos[:,:,2]))
-        ax2.set_axis_off()
-        ax2.set_title("Target")
-        ax2.patch.set_edgecolor("w")
-        ax2.patch.set_linewidth(1)
+    frame_count = world_pos[0].shape[0]
+    for i in range(frame_count):
+
+        for a in range(len(meshes)):
+            axs[a].cla()
+            axs[a].plot_trisurf(world_pos[a,i,:,0], world_pos[a,i,:,1], world_pos[a,i,:,2], triangles=triangles[a])
+            axs[a].set_xlim(np.min(world_pos[:,:,:,0]), np.max(world_pos[:,:,:,0]))
+            axs[a].set_ylim(np.min(world_pos[:,:,:,1]), np.max(world_pos[:,:,:,1]))
+            axs[a].set_zlim(np.min(world_pos[:,:,:,2]), np.max(world_pos[:,:,:,2]))
+            axs[a].set_axis_off()
+            axs[a].set_aspect('equal')
+
+            axs[a].set_title(f"{names[a]}")
+            axs[a].patch.set_edgecolor("w")
+            axs[a].patch.set_linewidth(1)
 
         fig.suptitle(f"{title}\nFrame: {i+1:>4}/{frame_count}")
         fig.tight_layout()
         plt.draw()
-        
         plt.pause(meta["dt"])
 
-        if save_fig:
+        if save:
             plt.savefig(Path(save_path, f"frame_{i:03}.png"), dpi=500)
     
     plt.close()
+    
+def display_prediction_target(pred: Mesh, targ: Mesh, meta: dict, title: str = "", save: bool = False, save_path: Path|str = "") -> None:
+    display_trajectory_list([pred, targ], ["Prediction", "Target"], meta, title, save, save_path)

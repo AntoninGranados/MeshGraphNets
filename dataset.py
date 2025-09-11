@@ -55,9 +55,9 @@ class Dataset(torch.utils.data.Dataset[Mesh]):
             if info["type"] == "static":
                 data = data.tile([self.meta["trajectory_length"], 1, 1])
             elif info["type"] == "dynamic_varlen":
-                length = torch.tensor(np.frombuffer(proto[key], np.int32))
-                length = length.reshape([-1])
-                data = [data[i:i+length[i]] for i in range(len(length))]
+                length = torch.tensor(np.frombuffer(proto["length_"+key], np.int32))
+                length = length.flatten()
+                data = list(torch.split(data, length.tolist()))
             elif info["type"] != "dynamic":
                 raise ValueError("Invalid data format")
 
@@ -69,7 +69,7 @@ class Dataset(torch.utils.data.Dataset[Mesh]):
     
     def __add_targets(self, data: Mesh) -> Mesh:
         out = {}
-        for key in self.meta["field_names"]:
+        for key in data.keys():
             out[key] = data[key][1:-1]
         out["prev|world_pos"] = data["world_pos"][0:-2]
         out["target|world_pos"] = data["world_pos"][2:]

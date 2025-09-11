@@ -3,8 +3,9 @@ img/
 dataset/
 checkpoints/
 
+*.mp4
+ssh-copy.sh
+
 .DS_Store
 .vscode/
 __pycache__/
-
-*.mp4
