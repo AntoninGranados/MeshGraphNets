@@ -1,3 +1,4 @@
+from torch_geometric.nn import radius
 import torch
 
 from enum import IntEnum
@@ -11,11 +12,11 @@ MultiGraph = namedtuple("Graph", ["node_features", "edge_sets"])
 # TODO: fix the dataset to only use the node types we need
 class NodeType(IntEnum):
     NORMAL = 0
-    # OBSTACLE = 1
+    OBSTACLE = 1
     # AIRFOIL = 2
     HANDLE = 3
     # INFLOW = 4
-    # OUtorchLOW = 5
+    # OUTFLOW = 5
     # WALL_BOUNDARY = 6
     COUNT = 9
 
@@ -43,6 +44,19 @@ def cells_to_edges(mesh: Mesh) -> torch.Tensor:
         torch.stack([nodes_b, nodes_a])
         ], dim=-1
     )
+
+# TODO: implement for batch size > 1
+def compute_world_edges(mesh: Mesh, meta: dict, edges: torch.Tensor|None = None) -> torch.Tensor:
+    if edges is None:
+        edges = cells_to_edges(mesh).rot90()
+
+    neighbours = radius(mesh["world_pos"][0], mesh["world_pos"][0], r=meta["collision_radius"]).rot90()
+
+    edge_mask = ~(edges[:,None]==neighbours).all(dim=-1).any(dim=0)
+    type_mask = (mesh["node_type"][0][neighbours[:,0]]==NodeType.NORMAL).any(dim=-1).flatten()
+    type_mask |= (mesh["node_type"][0][neighbours[:,1]]==NodeType.NORMAL).any(dim=-1).flatten()
+
+    return neighbours[edge_mask & type_mask]
 
 def generate_graph(mesh: Mesh) -> MultiGraph:
     # compute node features

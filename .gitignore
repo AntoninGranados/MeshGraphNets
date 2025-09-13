@@ -1,10 +1,11 @@
 venv/
 img/
+vid/
 dataset/
 checkpoints/
 
-*.mp4
 ssh-copy.sh
+test.py
 
 .DS_Store
 .vscode/

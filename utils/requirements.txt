@@ -1,0 +1,10 @@
+wheel
+tqdm
+numpy
+scipy
+matplotlib
+
+torch
+torch-cluster
+torch-geometric
+tfrecord[torch]

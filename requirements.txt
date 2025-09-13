@@ -1,6 +1,0 @@
-torch
-tfrecord[torch]
-tqdm
-numpy
-scipy
-matplotlib
