@@ -14,7 +14,10 @@ def ellipse_through(points):
 		p1 = np.array(points[0])
 		p2 = np.array(points[1])
 		A = np.outer(p1, p1) + np.outer(p2, p2)
-		return np.linalg.inv(A)
+		try:
+			return np.linalg.inv(A)
+		except:
+			return np.zeros((2,2))
 
 	if len(points) == 3:
 		A = np.array([

@@ -20,6 +20,7 @@ class NodeType(IntEnum):
     # WALL_BOUNDARY = 6
     COUNT = 9
 
+# TODO: change edges shape from (2, ...) to (..., 2)
 def cells_to_edges(mesh: Mesh) -> torch.Tensor:
     """ Compute the graph edges from the cells (triangles) """
 
@@ -45,11 +46,12 @@ def cells_to_edges(mesh: Mesh) -> torch.Tensor:
         ], dim=-1
     )
 
-# TODO: implement for batch size > 1
+# TODO: handle batch size > 1
 def compute_world_edges(mesh: Mesh, meta: dict, edges: torch.Tensor|None = None) -> torch.Tensor:
     if edges is None:
         edges = cells_to_edges(mesh).rot90()
 
+    #! torch.cdist might work here ?
     neighbours = radius(mesh["world_pos"][0], mesh["world_pos"][0], r=meta["collision_radius"]).rot90()
 
     edge_mask = ~(edges[:,None]==neighbours).all(dim=-1).any(dim=0)
