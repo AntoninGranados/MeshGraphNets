@@ -5,7 +5,6 @@ dataset/
 checkpoints/
 
 ssh-copy.sh
-test.py
 
 .DS_Store
 .vscode/
