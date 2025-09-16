@@ -12,14 +12,18 @@ import matplotlib.tri as mtri
 from matplotlib.patches import Ellipse as PltEllipse
 from pathlib import Path
 from tqdm import tqdm
+from typing import Callable
+
+# TODO: handle batch size > 1
+BATCH = 0   #! where we use only the first batch and should be handle corretly for multiple batch
 
 def plot_mesh(ax, mesh: Mesh):
-    triangles = mesh["cells"][0]
-    type_mask = (mesh["node_type"][0][triangles[:,0]]==NodeType.NORMAL).any(dim=-1).flatten()
-    type_mask |= (mesh["node_type"][0][triangles[:,1]]==NodeType.NORMAL).any(dim=-1).flatten()
-    type_mask |= (mesh["node_type"][0][triangles[:,2]]==NodeType.NORMAL).any(dim=-1).flatten()
+    triangles = mesh["cells"][BATCH]
+    type_mask = (mesh["node_type"][BATCH][triangles[:,0]]==NodeType.NORMAL).any(dim=-1).flatten()
+    type_mask |= (mesh["node_type"][BATCH][triangles[:,1]]==NodeType.NORMAL).any(dim=-1).flatten()
+    type_mask |= (mesh["node_type"][BATCH][triangles[:,2]]==NodeType.NORMAL).any(dim=-1).flatten()
 
-    triang = mtri.Triangulation(mesh["mesh_pos"][0][:,0], mesh["mesh_pos"][0][:,1], triangles, ~type_mask)
+    triang = mtri.Triangulation(mesh["mesh_pos"][BATCH][:,0], mesh["mesh_pos"][BATCH][:,1], triangles, ~type_mask)
     ax.triplot(triang, linewidth=1, color="w")
     ax.set_aspect('equal')
     ax.set_ylim(1, 0)
@@ -37,27 +41,85 @@ def plot_ellipse(ax, S: torch.Tensor, pos=(0,0), c="r") -> None:
     ax.add_patch(plt_ellipse)
 
 def get_triangle_sarea(tris: torch.Tensor) -> torch.Tensor:
-    """Compute the signed area of each triangle in a list of list"""
-    BA = tris[:,:,1] - tris[:,:,0]
-    CB = tris[:,:,2] - tris[:,:,1]
-    det = BA[:,:,0] * CB[:,:,1] - BA[:,:,1] * CB[:,:,0]
+    """Compute the signed area of each triangle in a list"""
+    select = lambda tensor, dim, idx : torch.index_select(tensor, dim, torch.Tensor([idx]).type(torch.int32))
+
+    BA = select(tris,-2,1) - select(tris,-2,0)
+    CB = select(tris,-2,2) - select(tris,-2,1)
+    det = select(BA,-1,0) * select(CB,-1,1) - select(BA,-1,1) * select(CB,-1,0)
+    det = det.reshape(tris.shape[:-2])
     return det/2
 
 def get_barycentric_coord(P: torch.Tensor, A: torch.Tensor, B: torch.Tensor, C: torch.Tensor) -> torch.Tensor:
-    ABC = torch.stack([A, B, C], dim=1)
-    PBC = torch.stack([P, B, C], dim=1)
-    APC = torch.stack([A, P, C], dim=1)
-    ABP = torch.stack([A, B, P], dim=1)
-    tris = torch.stack([ABC, PBC, APC, ABP], dim=1)
+    """Compute the barycentric coordinates of point `P` with repect to the triangle `ABC` (each argument can be a list of multiple points)"""
+    ABC = torch.stack([A, B, C], dim=-2)
+    PBC = torch.stack([P, B, C], dim=-2)
+    APC = torch.stack([A, P, C], dim=-2)
+    ABP = torch.stack([A, B, P], dim=-2)
+    tris = torch.stack([ABC, PBC, APC, ABP], dim=-3)
     sareas = get_triangle_sarea(tris)
     sareaABC = sareas[:,0].unsqueeze(-1)
 
     # if the triangle is flat, return the parmameter if the linear interpolation between A and B
     return torch.where(
         sareaABC == 0,  # flat triangle (division by 0)
-        torch.stack([torch.norm(P-A, dim=-1)/torch.norm(B-A, dim=-1), torch.norm(P-B, dim=-1)/torch.norm(B-A, dim=-1), torch.zeros(P.shape[0])], dim=-1),
+        torch.stack([
+            torch.norm(P-A, dim=-1)/torch.norm(B-A, dim=-1),
+            torch.norm(P-B, dim=-1)/torch.norm(B-A, dim=-1),
+            torch.zeros(P.shape[0])
+        ], dim=-1),
         sareas[:,1:] / sareaABC,
     )
+
+# TODO: handle batch size > 1
+def interpolate_field(from_mesh: Mesh, targ_mesh: Mesh, field: torch.Tensor, interpolation_filter: Callable[[torch.Tensor], torch.Tensor]|None=None) -> torch.Tensor:
+    """Interpolates the field `field` comming from the target mesh `targ_mesh` using the nodes in `from_mesh`"""
+    from_normal_mask = from_mesh["node_type"][BATCH].flatten() == NodeType.NORMAL
+    targ_normal_mask = targ_mesh["node_type"][BATCH].flatten() == NodeType.NORMAL
+
+    nodes_dist = torch.cdist(from_mesh["mesh_pos"][BATCH], targ_mesh["mesh_pos"][BATCH])
+    nodes_dist[:,~targ_normal_mask] = float("inf")
+
+    common_nodes_mask = (nodes_dist < 1e-3).any(dim=-1) & from_normal_mask
+    delete_nodes_mask = ~common_nodes_mask & from_normal_mask
+
+    # compute node pairs (from_mesh_i <-> targ_mesh_j | nan if not NORMAL or not in the target mesh)
+    node_pairs = torch.argmin(nodes_dist, dim=-1)
+    node_pairs = np.where(
+        common_nodes_mask,
+        node_pairs,
+        float("nan")
+    )
+
+    # compute the 3 closest nodes for each deleted node (not in mesh2) and its barycentric coordinates
+    delete_nodes_dist = torch.where(
+        targ_normal_mask.unsqueeze(0),
+        nodes_dist[delete_nodes_mask],
+        float("inf")
+    )
+    closest = torch.topk(delete_nodes_dist, 3, largest=False, dim=1).indices
+    delete_nodes_pos = mesh1["mesh_pos"][0][delete_nodes]
+    lambdas = get_barycentric_coord(
+        delete_nodes_pos,
+        targ_mesh["mesh_pos"][BATCH][closest[:,0]],
+        targ_mesh["mesh_pos"][BATCH][closest[:,1]],
+        targ_mesh["mesh_pos"][BATCH][closest[:,2]]
+    )
+    lambdas_shape = (-1, 3, *[1]*(len(field.shape)-1))
+    lambdas = lambdas.reshape(lambdas_shape)
+
+    # fill the interpolated field
+    new_field = torch.zeros((from_normal_mask.shape[0], *field.shape[1:]))
+    new_field[common_nodes_mask] = field[node_pairs[common_nodes_mask]]
+
+    interpolatied_field = torch.sum(field[closest] * lambdas, dim=1)
+    if interpolation_filter is not None:
+        interpolatied_field = torch.stack([
+            interpolation_filter(e) for e in interpolatied_field.unbind(dim=BATCH)
+        ], dim=BATCH)
+    new_field[delete_nodes_mask] = interpolatied_field
+
+    return new_field
 
 # https://stackoverflow.com/questions/78369381/group-pytorch-feature-tensors-according-to-labels-by-concatenation
 def aggregate(x, index):
@@ -72,20 +134,39 @@ def aggregate(x, index):
     x_ = x_[torch.argsort(index_, stable=True)].view(index_count.shape[0], int(index_count.max().item()), -1)
     return x_
 
+def closest_SDP(S: torch.Tensor) -> torch.Tensor:
+    """Compute the closest symetric definite matrix if `S` is not one"""
+    eigenvalues = torch.linalg.eigvals(S)
+    if torch.all(torch.real(eigenvalues) >= 0):
+        return S
+    
+    X = 0.5 * (S + S.T)
+    eigenvalues, eigenvectors = torch.linalg.eig(X)
+    eigenvalues = torch.real(eigenvalues)
+    eigenvectors = torch.real(eigenvectors)
+    eigenvalues = torch.maximum(eigenvalues, torch.zeros_like(eigenvalues))
+    eigenvalues = torch.minimum(eigenvalues, torch.ones_like(eigenvalues)*10/0.05)   #! hardcoded heuristic
+    Z = torch.diag(eigenvalues) + torch.eye(2)*10/0.05  #! hardcoded heuristic
+    return eigenvectors @ Z @ eigenvectors.T
+
+
 # TODO: handle batch size > 1
 # TODO: do not compute for nodes where NodeType != NORMAL
 def get_sizing_field_tensor(mesh: Mesh):
     edges = cells_to_edges(mesh)
 
     senders, receivers = edges[0,:], edges[1,:]
-    u_ij = mesh["mesh_pos"][0][receivers] - mesh["mesh_pos"][0][senders]
+    u_ij = mesh["mesh_pos"][BATCH][receivers] - mesh["mesh_pos"][BATCH][senders]
     aggregated_u_ij = aggregate(u_ij, senders)
 
     def compute_S(edges: torch.Tensor) -> torch.Tensor:
         cpu_edges = edges.detach().cpu()
         cpu_edges = edges[~edges.isnan().any(dim=-1)]
         S = miniellipse(cpu_edges.tolist())
-        return torch.Tensor(S)
+        S = torch.Tensor(S)
+        S = closest_SDP(S)
+
+        return S
 
     return torch.stack([
         compute_S(edges) for edges in torch.unbind(aggregated_u_ij, dim=0)
@@ -97,7 +178,7 @@ ds = Dataset(Path("dataset", "sphere_dynamic"), stage="valid")
 
 traj_len = ds.meta["trajectory_length"]
 traj = 0
-time_idx = 30
+time_idx = 48
 
 mesh1 = {
     k: v.unsqueeze(0)
@@ -108,8 +189,8 @@ mesh2 = {
     for k, v in ds[traj_len*traj+time_idx+1].items()
 }
 
-normal1_mask = mesh1["node_type"][0].flatten() == NodeType.NORMAL
-normal2_mask = mesh2["node_type"][0].flatten() == NodeType.NORMAL
+normal1_mask = mesh1["node_type"][BATCH].flatten() == NodeType.NORMAL
+normal2_mask = mesh2["node_type"][BATCH].flatten() == NodeType.NORMAL
 
 plt.style.use('dark_background')
 fig = plt.figure()
@@ -135,37 +216,43 @@ c = np.where(common_nodes[normal1_mask], "g", "r")
 ax1.scatter(mesh1["mesh_pos"][0,:,0][normal1_mask], mesh1["mesh_pos"][0,:,1][normal1_mask], c=c, alpha=0.8)
 
 # compute the 3 closest nodes for each deleted node (not in mesh2) and its barycentric coordinates
-rm_nodes_dist = torch.where(
+delete_nodes_dist = torch.where(
     normal2_mask.unsqueeze(0),
     nodes_dist[delete_nodes], float("inf")
 )
-closest = torch.topk(rm_nodes_dist, 3, largest=False, dim=1).indices
-rm_nodes_pos = mesh1["mesh_pos"][0][delete_nodes]
-lambdas = get_barycentric_coord(
-    rm_nodes_pos,
-    mesh2["mesh_pos"][0,closest[:,0]],
-    mesh2["mesh_pos"][0,closest[:,1]],
-    mesh2["mesh_pos"][0,closest[:,2]]
-)
-temp_idx = 0
-ax1.scatter(rm_nodes_pos[temp_idx, 0], rm_nodes_pos[temp_idx, 1], c="c")
-ax1.scatter(mesh2["mesh_pos"][0][closest[temp_idx],0], mesh2["mesh_pos"][0][closest[temp_idx],1], c="c", marker="x")
+closest = torch.topk(delete_nodes_dist, 3, largest=False, dim=1).indices
+temp_idx = 8
+ax1.scatter(mesh1["mesh_pos"][BATCH][delete_nodes][temp_idx,0], mesh1["mesh_pos"][BATCH][delete_nodes][temp_idx,1], c="c")
+ax1.scatter(mesh2["mesh_pos"][BATCH][closest[temp_idx],0],      mesh2["mesh_pos"][BATCH][closest[temp_idx],1], c="c", marker="x")
 
 
 plot_mesh(ax2, mesh2)
 sizing_field2 = get_sizing_field_tensor(mesh2)
+
+plot_ellipse(
+    ax2, sizing_field2[closest[temp_idx][0]],
+    mesh2["mesh_pos"][BATCH][closest[temp_idx][0]].unbind(), "c"
+)
+plot_ellipse(
+    ax2, sizing_field2[closest[temp_idx][1]],
+    mesh2["mesh_pos"][BATCH][closest[temp_idx][1]].unbind(), "c"
+)
+plot_ellipse(
+    ax2, sizing_field2[closest[temp_idx][2]],
+    mesh2["mesh_pos"][BATCH][closest[temp_idx][2]].unbind(), "c"
+)
+
+interpolated_sizing_filed = interpolate_field(mesh1, mesh2, sizing_field2)
 # display an ellipse from the sizing field
-interpolated_sizing_filed = torch.sum(sizing_field2[closest] * lambdas.unsqueeze(-1).unsqueeze(-1), dim=1)
-for i in range(rm_nodes_pos.shape[0]):
+for i in np.arange(len(normal1_mask))[delete_nodes]:
+    S = interpolated_sizing_filed[i]
     plot_ellipse(
-        ax2, interpolated_sizing_filed[i],
-        rm_nodes_pos[i].unbind(), "r"
+        ax2, S,
+        mesh1["mesh_pos"][BATCH][i].unbind(), "r"
     )
-sizing_field1 = np.zeros((normal1_mask.shape[0], 2, 2))
-sizing_field1[common_nodes] = sizing_field2[0]
+
 fig.tight_layout()
 plt.show()
-
 
 """
 ds = Dataset(Path("dataset", "sphere_dynamic"), stage="valid")
