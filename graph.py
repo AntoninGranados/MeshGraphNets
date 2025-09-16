@@ -1,8 +1,11 @@
 from torch_geometric.nn import radius
 import torch
 
+from utils import find_enclosing_triangle, BATCH
+
 from enum import IntEnum
 from collections import namedtuple
+from typing import Callable
 
 Mesh = dict[str, torch.Tensor]
 
@@ -18,8 +21,11 @@ class NodeType(IntEnum):
     # INFLOW = 4
     # OUTFLOW = 5
     # WALL_BOUNDARY = 6
-    COUNT = 9
+    COUNT = 9   #! should be 7 but should be kept for backward compatibility
 
+"""
+COMPUTATIONS ON EDGES
+"""
 # TODO: change edges shape from (2, ...) to (..., 2)
 def cells_to_edges(mesh: Mesh) -> torch.Tensor:
     """ Compute the graph edges from the cells (triangles) """
@@ -60,6 +66,9 @@ def compute_world_edges(mesh: Mesh, meta: dict, edges: torch.Tensor|None = None)
 
     return neighbours[edge_mask & type_mask]
 
+"""
+OPERATIONS ON MESHS
+"""
 def generate_graph(mesh: Mesh) -> MultiGraph:
     # compute node features
     velocities = torch.subtract(mesh["world_pos"], mesh["prev|world_pos"])
@@ -97,3 +106,51 @@ def generate_graph(mesh: Mesh) -> MultiGraph:
             mesh_edge_set
         ]
     )
+
+# TODO: handle batch size > 1
+# TODO: find better names for `from_mesh` and `targ_mesh`
+def interpolate_field(from_mesh: Mesh, targ_mesh: Mesh, field: torch.Tensor, interpolation_filter: Callable[[torch.Tensor], torch.Tensor]|None=None) -> torch.Tensor:
+    """Interpolates the field `field` comming from the target mesh `targ_mesh` using the nodes in `from_mesh`"""
+    from_normal_mask = from_mesh["node_type"][BATCH].flatten() == NodeType.NORMAL
+    targ_normal_mask = targ_mesh["node_type"][BATCH].flatten() == NodeType.NORMAL
+
+    nodes_dist = torch.cdist(from_mesh["mesh_pos"][BATCH], targ_mesh["mesh_pos"][BATCH])
+    nodes_dist[:,~targ_normal_mask] = float("inf")
+
+    common_nodes_mask = (nodes_dist < 1e-3).any(dim=-1) & from_normal_mask
+    delete_nodes_mask = ~common_nodes_mask & from_normal_mask
+
+    # compute node pairs (from_mesh_i <-> targ_mesh_j | nan if not NORMAL or not in the target mesh)
+    node_pairs = torch.argmin(nodes_dist, dim=-1)
+    node_pairs = torch.where(
+        common_nodes_mask,
+        node_pairs,
+        -1
+    )
+
+    # compute the enclosing triangle for each point
+    sorted_cells = targ_mesh["cells"][BATCH]
+    cell_mask = targ_normal_mask[sorted_cells[:,0]] | targ_normal_mask[sorted_cells[:,1]] | targ_normal_mask[sorted_cells[:,2]]
+    sorted_cells = sorted_cells[cell_mask]
+    tris, lambdas = find_enclosing_triangle(
+        from_mesh["mesh_pos"][BATCH][delete_nodes_mask],
+        targ_mesh["mesh_pos"][BATCH],
+        sorted_cells
+    )
+
+    enclosing_tris = sorted_cells[tris]
+    lambdas_shape = (-1, 3, *[1]*(len(field.shape)-1))
+    lambdas = lambdas.reshape(lambdas_shape)
+
+    # fill the interpolated field
+    new_field = torch.zeros((from_normal_mask.shape[0], *field.shape[1:]))
+    new_field[common_nodes_mask] = field[node_pairs[common_nodes_mask]]
+
+    interpolatied_field = torch.sum(field[enclosing_tris] * lambdas, dim=1)
+    if interpolation_filter is not None:
+        interpolatied_field = torch.stack([
+            interpolation_filter(e) for e in interpolatied_field.unbind(dim=BATCH)
+        ], dim=BATCH)
+    new_field[delete_nodes_mask] = interpolatied_field
+
+    return new_field
