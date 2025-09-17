@@ -72,7 +72,7 @@ def display_trajectory_list(meshes: list[Mesh], names: list[str], meta: dict, ti
 
         for a in range(len(meshes)):
             axs[a].cla()
-            axs[a].plot_trisurf(world_pos[a,i,:,0], world_pos[a,i,:,1], world_pos[a,i,:,2], triangles=triangles[a])
+            axs[a].plot_trisurf(world_pos[a,i,:,0], world_pos[a,i,:,1], world_pos[a,i,:,2], triangles=triangles[a], color="w")
             axs[a].set_xlim(np.min(world_pos[:,:,:,0]), np.max(world_pos[:,:,:,0]))
             axs[a].set_ylim(np.min(world_pos[:,:,:,1]), np.max(world_pos[:,:,:,1]))
             axs[a].set_zlim(np.min(world_pos[:,:,:,2]), np.max(world_pos[:,:,:,2]))

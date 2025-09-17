@@ -33,8 +33,7 @@ OPERATIONS ON TRIANGLES
 """
 def get_triangle_sarea(tris: torch.Tensor) -> torch.Tensor:
     """Compute the signed area of each triangle in a list"""
-    select = lambda tensor, dim, idx : torch.index_select(tensor, dim, torch.Tensor([idx]).type(torch.int32))
-
+    select = lambda tensor, dim, idx : torch.index_select(tensor, dim, torch.Tensor([idx]).type(torch.long))
     BA = select(tris,-2,1) - select(tris,-2,0)
     CB = select(tris,-2,2) - select(tris,-2,1)
     det = select(BA,-1,0) * select(CB,-1,1) - select(BA,-1,1) * select(CB,-1,0)

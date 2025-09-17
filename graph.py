@@ -26,36 +26,58 @@ class NodeType(IntEnum):
 """
 COMPUTATIONS ON EDGES
 """
-# TODO: change edges shape from (2, ...) to (..., 2)
-def cells_to_edges(mesh: Mesh) -> torch.Tensor:
-    """ Compute the graph edges from the cells (triangles) """
+def find_edge(a, b, edges) -> int:
+    candidate = torch.nonzero(((edges[:,0] == a) & (edges[:,1] == b)) | ((edges[:,0] == b) & (edges[:,1] == a)))
+    if len(candidate) == 0:
+        return -1
+    return int(candidate.item())
 
-    cells = mesh["cells"][0]    #! assumes same cells across the whole batch
-    dirty_edges = torch.concat([
+def cells_to_edges(mesh: Mesh) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute the graph edges from the cells (triangles) and the opposites nodes for each edge
+    """
+
+    cells = mesh["cells"][BATCH]
+    unpacked_edges = torch.concat([
         torch.stack([cells[:,0], cells[:,1]], dim=1),
         torch.stack([cells[:,1], cells[:,2]], dim=1),
         torch.stack([cells[:,2], cells[:,0]], dim=1)
     ], dim=0)
+    unpacked_opposite = torch.concat([
+        cells[:,2],
+        cells[:,0],
+        cells[:,1]
+    ], dim=0)
 
     # sort nodes
-    nodes_a, nodes_b = torch.max(dirty_edges, dim=1).values, torch.min(dirty_edges, dim=1).values
+    nodes_a, nodes_b = torch.max(unpacked_edges, dim=1).values, torch.min(unpacked_edges, dim=1).values
     # pack nodes
     max_node = torch.max(cells) + 1
     packed = torch.add(nodes_a, nodes_b * max_node)
     # remove duplicated nodes
-    nodes = torch.unique(packed)
+    nodes, inverse = torch.unique(packed, return_inverse=True)
     nodes_a, nodes_b = nodes % max_node, nodes // max_node
-    
-    return torch.concat([
-        torch.stack([nodes_a, nodes_b]),
-        torch.stack([nodes_b, nodes_a])
-        ], dim=-1
+
+    edges = torch.concat([
+        torch.stack([nodes_a, nodes_b], dim=-1),
+        torch.stack([nodes_b, nodes_a], dim=-1)
+        ], dim=0
     )
+
+    opposites = -torch.ones((nodes.shape[0], 2), dtype=torch.long)
+    for e_id in range(len(nodes)):
+        mask = inverse == e_id
+        opp = unpacked_opposite[mask]
+        opposites[e_id, :opp.shape[0]] = opp # shape off opp should be (1) or (2)
+    opposites = torch.concat([opposites, opposites], dim=0)
+
+    return (edges, opposites)
+    
 
 # TODO: handle batch size > 1
 def compute_world_edges(mesh: Mesh, meta: dict, edges: torch.Tensor|None = None) -> torch.Tensor:
     if edges is None:
-        edges = cells_to_edges(mesh).rot90()
+        edges, _ = cells_to_edges(mesh)
 
     #! torch.cdist might work here ?
     neighbours = radius(mesh["world_pos"][0], mesh["world_pos"][0], r=meta["collision_radius"]).rot90()
@@ -79,8 +101,8 @@ def generate_graph(mesh: Mesh) -> MultiGraph:
     ], dim=-1)
     
     # compute mesh edge sets
-    edges = cells_to_edges(mesh)
-    senders, receivers = edges[0,:], edges[1,:]
+    edges, _ = cells_to_edges(mesh)
+    senders, receivers = edges[:,0], edges[:,0]
 
     rel_world_pos = (torch.index_select(mesh["world_pos"], 1, senders) -
                         torch.index_select(mesh["world_pos"], 1, receivers))
@@ -149,8 +171,8 @@ def interpolate_field(from_mesh: Mesh, targ_mesh: Mesh, field: torch.Tensor, int
     interpolatied_field = torch.sum(field[enclosing_tris] * lambdas, dim=1)
     if interpolation_filter is not None:
         interpolatied_field = torch.stack([
-            interpolation_filter(e) for e in interpolatied_field.unbind(dim=BATCH)
-        ], dim=BATCH)
+            interpolation_filter(e) for e in interpolatied_field.unbind(dim=0)
+        ], dim=0)
     new_field[delete_nodes_mask] = interpolatied_field
 
     return new_field

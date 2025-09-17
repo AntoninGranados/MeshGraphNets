@@ -167,7 +167,7 @@ def rollout(device: torch.device, hyper: dict[str, Any], checkpoints: list[int|N
     ]
     targ_mesh = {k: v.unsqueeze(0) for k,v in mesh.items()}
     
-    max_frame = 100
+    max_frame = 399
     prev_meshs = [
         {k: v.clone() for k,v in pred_mesh.items()}
         for pred_mesh in pred_meshs

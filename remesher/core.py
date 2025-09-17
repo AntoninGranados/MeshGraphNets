@@ -24,9 +24,9 @@ def closest_SDP(S: torch.Tensor) -> torch.Tensor:
 # TODO: handle batch size > 1
 # TODO: do not compute for nodes where NodeType != NORMAL
 def get_sizing_field_tensor(mesh: Mesh):
-    edges = cells_to_edges(mesh)
+    edges, _ = cells_to_edges(mesh)
 
-    senders, receivers = edges[0,:], edges[1,:]
+    senders, receivers = edges[:,0], edges[:,1]
     u_ij = mesh["mesh_pos"][BATCH][receivers] - mesh["mesh_pos"][BATCH][senders]
     aggregated_u_ij = aggregate(u_ij, senders)
 
