@@ -172,6 +172,7 @@ def rollout(device: torch.device, hyper: dict[str, Any], checkpoints: list[int|N
         {k: v.clone() for k,v in pred_mesh.items()}
         for pred_mesh in pred_meshs
     ]
+    loss = [0.0]
     for i in tqdm(range(1, max_frame), file=sys.stdout):
         for m in range(len(models)):
             current_mesh = move_batch_to(prev_meshs[m], device)
@@ -186,9 +187,10 @@ def rollout(device: torch.device, hyper: dict[str, Any], checkpoints: list[int|N
         targ_mesh_i = {k: v.unsqueeze(0) for k,v in ds[test_idx*399+i].items()}
         targ_mesh = {k: torch.concat([v, targ_mesh_i[k]], dim=0) for k,v in targ_mesh.items()}
         
+        loss.append(torch.sqrt(torch.nn.MSELoss()(targ_mesh_i["world_pos"], prev_meshs[0]["world_pos"])).item())
     
     # display_trajectory(pred_meshs[0], ds.meta, max_frame=None, title="Flag Simple")
-    display_prediction_target(pred_meshs[0], targ_mesh, ds.meta, title="Flag Simple", save=False, save_path=Path("img"))
+    display_prediction_target(pred_meshs[0], targ_mesh, ds.meta, title="Flag Simple", loss=loss, save=False, save_path=Path("img"))
     # display_trajectory_list([*pred_meshs, targ_mesh], [*[f"Pred {ck}" for ck in checkpoints], "Target"], ds.meta, "Flag Simple", save=False, save_path=Path("img"))
 
 if __name__ == "__main__":

@@ -53,7 +53,7 @@ def display_trajectory(data: Mesh, meta: dict, max_frame: int|None = None, title
     
     plt.close()
 
-def display_trajectory_list(meshes: list[Mesh], names: list[str], meta: dict, title: str = "", save: bool = False, save_path: Path|str = "") -> None:
+def display_trajectory_list(meshes: list[Mesh], names: list[str], meta: dict, title: str = "", loss: list = [], save: bool = False, save_path: Path|str = "") -> None:
     def get_np(tensor: torch.Tensor) -> np.ndarray:
         """removes batch dimension if there is one and converts to numpy array"""
         if len(tensor.shape) > 3:
@@ -66,25 +66,33 @@ def display_trajectory_list(meshes: list[Mesh], names: list[str], meta: dict, ti
     plt.style.use('dark_background')
     fig, axs = plt.subplots(1, len(meshes), subplot_kw=dict(projection='3d'))
     fig.set_size_inches((3*len(meshes), 4))
+    fig.subplots_adjust(left=0.05, bottom=0, right=0.95, top=0.80)
+    plt.rcParams["font.family"] = "monospace"
 
     frame_count = world_pos[0].shape[0]
     for i in range(frame_count):
-
+        fig.clf()
+        axs = [fig.add_subplot(1, len(meshes), a+1, projection='3d') for a in range(len(meshes))]
         for a in range(len(meshes)):
-            axs[a].cla()
-            axs[a].plot_trisurf(world_pos[a,i,:,0], world_pos[a,i,:,1], world_pos[a,i,:,2], triangles=triangles[a], color="w")
+            # axs[a].cla()
+            axs[a].plot_trisurf(world_pos[a,i,:,0], world_pos[a,i,:,1], world_pos[a,i,:,2], triangles=triangles[a], color="white", alpha=1)
             axs[a].set_xlim(np.min(world_pos[:,:,:,0]), np.max(world_pos[:,:,:,0]))
             axs[a].set_ylim(np.min(world_pos[:,:,:,1]), np.max(world_pos[:,:,:,1]))
             axs[a].set_zlim(np.min(world_pos[:,:,:,2]), np.max(world_pos[:,:,:,2]))
             axs[a].set_axis_off()
             axs[a].set_aspect('equal')
 
-            axs[a].set_title(f"{names[a]}")
+            axs[a].set_title(f"{names[a]}", color="gray")
             axs[a].patch.set_edgecolor("w")
             axs[a].patch.set_linewidth(1)
 
-        fig.suptitle(f"{title}\nFrame: {i+1:>4}/{frame_count}")
-        fig.tight_layout()
+        subtitle = f"Frame: {i+1:>3}/{frame_count}"
+        if loss != []:
+            subtitle = f"Frame: {i+1:>3}/{frame_count}\nLoss (RMSE): {loss[i]:.4f}"
+        fig.suptitle(f"{title}", fontsize=16, y=0.95)
+        fig.text(0.5, 0.80, subtitle, ha="center", fontsize=10, color="white")
+
+        # fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.9))
         plt.draw()
         plt.pause(meta["dt"])
 
@@ -93,5 +101,5 @@ def display_trajectory_list(meshes: list[Mesh], names: list[str], meta: dict, ti
     
     plt.close()
     
-def display_prediction_target(pred: Mesh, targ: Mesh, meta: dict, title: str = "", save: bool = False, save_path: Path|str = "") -> None:
-    display_trajectory_list([pred, targ], ["Prediction", "Target"], meta, title, save, save_path)
+def display_prediction_target(pred: Mesh, targ: Mesh, meta: dict, title: str = "", loss: list = [], save: bool = False, save_path: Path|str = "") -> None:
+    display_trajectory_list([pred, targ], ["Prediction", "Target"], meta, title, loss, save, save_path)

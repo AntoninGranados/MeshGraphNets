@@ -42,12 +42,12 @@ def cells_to_edges(mesh: Mesh) -> tuple[torch.Tensor, torch.Tensor]:
         torch.stack([cells[:,0], cells[:,1]], dim=1),
         torch.stack([cells[:,1], cells[:,2]], dim=1),
         torch.stack([cells[:,2], cells[:,0]], dim=1)
-    ], dim=0)
+    ], dim=0).long()
     unpacked_opposite = torch.concat([
         cells[:,2],
         cells[:,0],
         cells[:,1]
-    ], dim=0)
+    ], dim=0).long()
 
     # sort nodes
     nodes_a, nodes_b = torch.max(unpacked_edges, dim=1).values, torch.min(unpacked_edges, dim=1).values
@@ -55,8 +55,8 @@ def cells_to_edges(mesh: Mesh) -> tuple[torch.Tensor, torch.Tensor]:
     max_node = torch.max(cells) + 1
     packed = torch.add(nodes_a, nodes_b * max_node)
     # remove duplicated nodes
-    nodes, inverse = torch.unique(packed, return_inverse=True)
-    nodes_a, nodes_b = nodes % max_node, nodes // max_node
+    unique_packed_edges, inverse = torch.unique(packed, return_inverse=True)
+    nodes_a, nodes_b = unique_packed_edges % max_node, unique_packed_edges // max_node
 
     edges = torch.concat([
         torch.stack([nodes_a, nodes_b], dim=-1),
@@ -64,11 +64,23 @@ def cells_to_edges(mesh: Mesh) -> tuple[torch.Tensor, torch.Tensor]:
         ], dim=0
     )
 
-    opposites = -torch.ones((nodes.shape[0], 2), dtype=torch.long)
-    for e_id in range(len(nodes)):
-        mask = inverse == e_id
-        opp = unpacked_opposite[mask]
-        opposites[e_id, :opp.shape[0]] = opp # shape off opp should be (1) or (2)
+    # compute the opposite nodes
+    opposites = -torch.ones((unique_packed_edges.shape[0], 2), dtype=torch.long, device=inverse.device)
+
+    mask = (inverse[None, :] == torch.arange(len(unique_packed_edges), device=inverse.device)[:, None])
+    opposites_count = torch.count_nonzero(mask, dim=-1)
+    border = opposites_count == 1
+    border_idx = torch.nonzero(border, as_tuple=True)[0].long()
+    interior_idx = torch.nonzero(~border, as_tuple=True)[0].long()
+
+    # 1 opposite node (on the border)
+    opposites_1 = torch.nonzero(mask[border_idx], as_tuple=True)[1]
+    opposites[border_idx, 0] = unpacked_opposite[opposites_1]
+    # 2 opposite nodes (on the interio)
+    opposites_2 = torch.nonzero(mask[interior_idx], as_tuple=True)[1].reshape((-1, 2))
+    opposites[interior_idx, 0] = unpacked_opposite[opposites_2[:,0]]
+    opposites[interior_idx, 1] = unpacked_opposite[opposites_2[:,1]]
+
     opposites = torch.concat([opposites, opposites], dim=0)
 
     return (edges, opposites)
@@ -94,15 +106,14 @@ OPERATIONS ON MESHS
 def generate_graph(mesh: Mesh) -> MultiGraph:
     # compute node features
     velocities = torch.subtract(mesh["world_pos"], mesh["prev|world_pos"])
-    types = torch.nn.functional.one_hot(mesh["node_type"].squeeze(-1).type(torch.long), NodeType.COUNT)
+    types = torch.nn.functional.one_hot(mesh["node_type"].squeeze(-1).long(), NodeType.COUNT)
     node_features = torch.concat([
         velocities,
         types
     ], dim=-1)
-    
     # compute mesh edge sets
     edges, _ = cells_to_edges(mesh)
-    senders, receivers = edges[:,0], edges[:,0]
+    senders, receivers = edges[:,0], edges[:,1]
 
     rel_world_pos = (torch.index_select(mesh["world_pos"], 1, senders) -
                         torch.index_select(mesh["world_pos"], 1, receivers))
@@ -114,7 +125,6 @@ def generate_graph(mesh: Mesh) -> MultiGraph:
         rel_mesh_pos,
         torch.norm(rel_mesh_pos, dim=-1, keepdim=True),
     ], dim=-1)
-
     mesh_edge_set = EdgeSet(
         name="mesh",
         edge_features=mesh_edge_features,
