@@ -32,6 +32,10 @@ def find_edge(a, b, edges) -> int:
         return -1
     return int(candidate.item())
 
+def find_edges_with(a, edges) -> torch.Tensor:
+    candidate = torch.nonzero((edges[:,0] == a) | (edges[:,1] == a)).squeeze()
+    return candidate
+
 def cells_to_edges(mesh: Mesh) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Compute the graph edges from the cells (triangles) and the opposites nodes for each edge

@@ -66,8 +66,9 @@ def get_triangle_aspect_ratio(pos, A, B, C) -> torch.Tensor:
     a = torch.norm(pos[A].unsqueeze(0) - pos[B].unsqueeze(0))
     b = torch.norm(pos[B].unsqueeze(0) - pos[C].unsqueeze(0))
     c = torch.norm(pos[C].unsqueeze(0) - pos[A].unsqueeze(0))
+    s = (a+b+c)/2
 
-    return a*b*c / ((b+c-a)*(c+a-b)*(a+b-c))
+    return a*b*c / (8 * (s-a)*(s-b)*(s-c))
 
 def find_enclosing_triangle(P: torch.Tensor, pos: torch.Tensor, tris: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """
