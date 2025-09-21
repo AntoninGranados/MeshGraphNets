@@ -7,6 +7,7 @@ from enum import IntEnum
 from collections import namedtuple
 from typing import Callable
 
+# node_type, world_pos, cells, mesh_pos
 Mesh = dict[str, torch.Tensor]
 
 EdgeSet = namedtuple("EdgeSet", ["name", "edge_features", "senders", "receivers"])
