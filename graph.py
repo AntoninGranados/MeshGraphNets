@@ -60,8 +60,8 @@ def cells_to_edges(mesh: Mesh) -> tuple[torch.Tensor, torch.Tensor]:
     max_node = torch.max(cells) + 1
     packed = torch.add(nodes_a, nodes_b * max_node)
     # remove duplicated nodes
-    nodes, inverse = torch.unique(packed, return_inverse=True)
-    nodes_a, nodes_b = nodes % max_node, nodes // max_node
+    unique_packed_edges, inverse = torch.unique(packed, return_inverse=True)
+    nodes_a, nodes_b = unique_packed_edges % max_node, unique_packed_edges // max_node
 
     edges = torch.concat([
         torch.stack([nodes_a, nodes_b], dim=-1),
@@ -70,8 +70,8 @@ def cells_to_edges(mesh: Mesh) -> tuple[torch.Tensor, torch.Tensor]:
     )
 
     # compute opposite nodes
-    opposites = -torch.ones((nodes.shape[0], 2), device=unpacked_edges.device).long()
-    counts = torch.bincount(inverse, minlength=nodes.shape[0])  # should be 1 (if edge on the border) or 2
+    opposites = -torch.ones((unique_packed_edges.shape[0], 2), device=unpacked_edges.device).long()
+    counts = torch.bincount(inverse, minlength=unique_packed_edges.shape[0])  # should be 1 (if edge on the border) or 2
 
     positions = torch.zeros_like(inverse)
     positions[torch.cumsum(counts[inverse], dim=0) - 1] = 1
@@ -101,7 +101,7 @@ MESH OPERATIONS
 def generate_graph(mesh: Mesh, meta: dict) -> MultiGraph:
     # compute node features
     velocities = torch.subtract(mesh["world_pos"], mesh["prev|world_pos"])
-    types = torch.nn.functional.one_hot(mesh["node_type"].squeeze(-1).type(torch.long), NodeType.COUNT)
+    types = torch.nn.functional.one_hot(mesh["node_type"].squeeze(-1).long(), NodeType.COUNT)
     node_features = torch.concat([
         velocities,
         types
@@ -121,7 +121,7 @@ def generate_graph(mesh: Mesh, meta: dict) -> MultiGraph:
         rel_mesh_pos,
         torch.norm(rel_mesh_pos, dim=-1, keepdim=True),
     ], dim=-1)
-    
+
     mesh_edge_set = EdgeSet(
         name="mesh",
         edge_features=mesh_edge_features,
