@@ -11,7 +11,7 @@
         "start-lr": 1e-4,
         "min-lr": 1e-6,
 
-        "checkpoint-dir": "./checkpoints"
+        "checkpoint-dir": "./checkpoints_flag_minimal"
     },
 
     "r_W": 0.1

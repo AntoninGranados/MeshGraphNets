@@ -59,7 +59,7 @@ def init_from_checkpoint(device: torch.device, hyper: dict[str, Any], checkpoint
     print(f"Loading model from {checkpoint_path}")
     last_checkpoint = torch.load(checkpoint_path, map_location=device)
 
-    model = Model(device, hyper["network"]["graph-net-blocks"])
+    model = Model(device)
     model.load_state_dict(last_checkpoint['model_state_dict'])
     model.to(device)
 
@@ -83,20 +83,21 @@ def init_from_checkpoint(device: torch.device, hyper: dict[str, Any], checkpoint
 
 
 def train(device: torch.device, hyper: dict[str, Any]) -> None:
-    train_ds = Dataset(Path("dataset", "flag_minimal"), stage="train")
-    valid_ds = Dataset(Path("dataset", "flag_minimal"), stage="valid")
+    train_ds = Dataset(Path("dataset", "sphere_dynamic"), stage="train")
+    valid_ds = Dataset(Path("dataset", "sphere_dynamic"), stage="valid")
     
     train_loader = DataLoader(train_ds, batch_size = 1, shuffle = True, pin_memory = True)
     valid_loader = DataLoader(train_ds, pin_memory = True)
     
-    # model, optimizer, scheduler, start_epoch, train_loss, valid_loss = init_model(device, hyper)
-    model, optimizer, scheduler, start_epoch, train_loss, valid_loss = init_from_checkpoint(device, hyper)
+    model, optimizer, scheduler, start_epoch, train_loss, valid_loss = init_model(device, hyper)
+    # model, optimizer, scheduler, start_epoch, train_loss, valid_loss = init_from_checkpoint(device, hyper)
     model.train()
 
     # Warmup
     if start_epoch == -1:
-        for batch in tqdm(train_loader, desc="Warmup"):
-            batch = move_batch_to(batch, device)
+        iter_loader = iter(train_loader)
+        for batch_id in tqdm(range(1000), desc="Warmup"):
+            batch = move_batch_to(next(iter_loader), device)
             with torch.no_grad():
                 _ = model.loss(batch, train_ds.meta)
 
@@ -167,7 +168,7 @@ def rollout(device: torch.device, hyper: dict[str, Any], checkpoints: list[int|N
     ]
     targ_mesh = {k: v.unsqueeze(0) for k,v in mesh.items()}
     
-    max_frame = 399
+    max_frame = 10
     prev_meshs = [
         {k: v.clone() for k,v in pred_mesh.items()}
         for pred_mesh in pred_meshs
@@ -188,7 +189,7 @@ def rollout(device: torch.device, hyper: dict[str, Any], checkpoints: list[int|N
         
     
     # display_trajectory(pred_meshs[0], ds.meta, max_frame=None, title="Flag Simple")
-    display_prediction_target(pred_meshs[0], targ_mesh, ds.meta, title="Flag Simple", save=False, save_path=Path("img"))
+    display_prediction_target(pred_meshs[0], targ_mesh, ds.meta, title="Flag Simple", save=True, save_path=Path("img"))
     # display_trajectory_list([*pred_meshs, targ_mesh], [*[f"Pred {ck}" for ck in checkpoints], "Target"], ds.meta, "Flag Simple", save=False, save_path=Path("img"))
 
 if __name__ == "__main__":

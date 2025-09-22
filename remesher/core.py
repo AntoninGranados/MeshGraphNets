@@ -43,7 +43,7 @@ def from_meshstate(ms: MeshState) -> Mesh:
     mesh["mesh_pos"] = torch.Tensor()
     mesh["world_pos"] = torch.Tensor()
 
-    return batch_dicts(mesh)
+    return batch_dicts([mesh])
 
 """
 SIZING FIELD OPERATIONS

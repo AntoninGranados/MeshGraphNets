@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any, override
 from copy import deepcopy
 
-from graph import NodeType, Mesh
+from graph import NodeType, Mesh, interpolate_field
+from utils import BATCH
 
 def move_batch_to(batch: Mesh, device: torch.device):
     return {k: v.to(device) for k, v in batch.items()}
@@ -64,6 +65,7 @@ class Dataset(torch.utils.data.Dataset[Mesh]):
             out[key] = data
 
         out = self.__add_targets(out)
+        # print("———————————————————")
 
         return out
     
@@ -71,8 +73,24 @@ class Dataset(torch.utils.data.Dataset[Mesh]):
         out = {}
         for key in data.keys():
             out[key] = data[key][1:-1]
+        
         out["prev|world_pos"] = data["world_pos"][0:-2]
         out["target|world_pos"] = data["world_pos"][2:]
+
+        """
+        out["prev|world_pos"] = []
+        out["target|world_pos"] = []
+        prev_mesh = {k: v[0].unsqueeze(0) for k,v in data.items()}
+        curr_mesh = {k: v[1].unsqueeze(0) for k,v in data.items()}
+
+        for id in range(len(data["world_pos"])-2):
+            targ_mesh = {k: v[id+2].unsqueeze(0) for k,v in data.items()}
+            out["prev|world_pos"].append(interpolate_field(curr_mesh, prev_mesh, prev_mesh["world_pos"][BATCH]))
+            out["target|world_pos"].append(interpolate_field(curr_mesh, targ_mesh, targ_mesh["world_pos"][BATCH]))
+
+            prev_mesh = curr_mesh
+            curr_mesh = targ_mesh
+        """
         return out
 
     def __add_noise(self, data: Mesh) -> Mesh:

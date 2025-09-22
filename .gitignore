@@ -2,7 +2,7 @@ venv/
 img/
 vid/
 dataset/
-checkpoints/
+checkpoints*/
 
 ssh-copy.sh
 

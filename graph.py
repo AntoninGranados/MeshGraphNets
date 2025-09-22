@@ -25,7 +25,7 @@ class NodeType(IntEnum):
     COUNT = 9   #! should be 7 but should be kept for backward compatibility
 
 """
-COMPUTATIONS ON EDGES
+EDGE OPERATIONS
 """
 def find_edge(a, b, edges) -> int:
     candidate = torch.nonzero(((edges[:,0] == a) & (edges[:,1] == b)) | ((edges[:,0] == b) & (edges[:,1] == a)))
@@ -47,12 +47,12 @@ def cells_to_edges(mesh: Mesh) -> tuple[torch.Tensor, torch.Tensor]:
         torch.stack([cells[:,0], cells[:,1]], dim=1),
         torch.stack([cells[:,1], cells[:,2]], dim=1),
         torch.stack([cells[:,2], cells[:,0]], dim=1)
-    ], dim=0)
+    ], dim=0).long()
     unpacked_opposite = torch.concat([
         cells[:,2],
         cells[:,0],
         cells[:,1]
-    ], dim=0)
+    ], dim=0).long()
 
     # sort nodes
     nodes_a, nodes_b = torch.max(unpacked_edges, dim=1).values, torch.min(unpacked_edges, dim=1).values
@@ -69,14 +69,17 @@ def cells_to_edges(mesh: Mesh) -> tuple[torch.Tensor, torch.Tensor]:
         ], dim=0
     )
 
-    opposites = -torch.ones((nodes.shape[0], 2), dtype=torch.long)
-    for e_id in range(len(nodes)):
-        mask = inverse == e_id
-        opp = unpacked_opposite[mask]
-        opposites[e_id, :opp.shape[0]] = opp # shape off opp should be (1) or (2)
-    opposites = torch.concat([opposites, opposites], dim=0)
+    # compute opposite nodes
+    opposites = -torch.ones((nodes.shape[0], 2), device=unpacked_edges.device).long()
+    counts = torch.bincount(inverse, minlength=nodes.shape[0])  # should be 1 (if edge on the border) or 2
 
-    return (edges, opposites)
+    positions = torch.zeros_like(inverse)
+    positions[torch.cumsum(counts[inverse], dim=0) - 1] = 1
+
+    opposites[inverse, positions] = unpacked_opposite
+    opposites = torch.concat([opposites, opposites])
+
+    return edges, opposites
     
 
 # TODO: handle batch size > 1
@@ -84,19 +87,18 @@ def compute_world_edges(mesh: Mesh, meta: dict, edges: torch.Tensor|None = None)
     if edges is None:
         edges, _ = cells_to_edges(mesh)
 
-    #! torch.cdist might work here ?
-    neighbours = radius(mesh["world_pos"][0], mesh["world_pos"][0], r=meta["collision_radius"]).rot90()
+    neighbours = radius(mesh["world_pos"][BATCH], mesh["world_pos"][BATCH], r=meta["collision_radius"]).rot90()
 
     edge_mask = ~(edges[:,None]==neighbours).all(dim=-1).any(dim=0)
-    type_mask = (mesh["node_type"][0][neighbours[:,0]]==NodeType.NORMAL).any(dim=-1).flatten()
-    type_mask |= (mesh["node_type"][0][neighbours[:,1]]==NodeType.NORMAL).any(dim=-1).flatten()
+    type_mask = (mesh["node_type"][BATCH][neighbours[:,0]]==NodeType.NORMAL).any(dim=-1).flatten()
+    type_mask |= (mesh["node_type"][BATCH][neighbours[:,1]]==NodeType.NORMAL).any(dim=-1).flatten()
 
     return neighbours[edge_mask & type_mask]
 
 """
-OPERATIONS ON MESHS
+MESH OPERATIONS
 """
-def generate_graph(mesh: Mesh) -> MultiGraph:
+def generate_graph(mesh: Mesh, meta: dict) -> MultiGraph:
     # compute node features
     velocities = torch.subtract(mesh["world_pos"], mesh["prev|world_pos"])
     types = torch.nn.functional.one_hot(mesh["node_type"].squeeze(-1).type(torch.long), NodeType.COUNT)
@@ -105,9 +107,9 @@ def generate_graph(mesh: Mesh) -> MultiGraph:
         types
     ], dim=-1)
     
-    # compute mesh edge sets
-    edges, _ = cells_to_edges(mesh)
-    senders, receivers = edges[:,0], edges[:,0]
+    # compute mesh edge set
+    mesh_edges, _ = cells_to_edges(mesh)
+    senders, receivers = mesh_edges[:,0], mesh_edges[:,0]
 
     rel_world_pos = (torch.index_select(mesh["world_pos"], 1, senders) -
                         torch.index_select(mesh["world_pos"], 1, receivers))
@@ -119,18 +121,39 @@ def generate_graph(mesh: Mesh) -> MultiGraph:
         rel_mesh_pos,
         torch.norm(rel_mesh_pos, dim=-1, keepdim=True),
     ], dim=-1)
-
+    
     mesh_edge_set = EdgeSet(
         name="mesh",
         edge_features=mesh_edge_features,
         senders=senders,
         receivers=receivers
     )
+    
+    #! compute world edge set
+    """
+    world_edges = compute_world_edges(mesh, meta=meta, edges=mesh_edges)
+    senders, receivers = world_edges[:,0], world_edges[:,0]
+
+    rel_world_pos = (torch.index_select(mesh["world_pos"], 1, senders) -
+                        torch.index_select(mesh["world_pos"], 1, receivers))
+    world_edge_features = torch.concat([
+        rel_world_pos,
+        torch.norm(rel_world_pos, dim=-1, keepdim=True),
+    ], dim=-1)
+
+    world_edge_set = EdgeSet(
+        name="world",
+        edge_features=world_edge_features,
+        senders=senders,
+        receivers=receivers
+    )
+    """
 
     return MultiGraph(
         node_features=node_features,
         edge_sets=[
-            mesh_edge_set
+            mesh_edge_set,
+            #! world_edge_set
         ]
     )
 
@@ -173,11 +196,11 @@ def interpolate_field(from_mesh: Mesh, targ_mesh: Mesh, field: torch.Tensor, int
     new_field = torch.zeros((from_normal_mask.shape[0], *field.shape[1:]))
     new_field[common_nodes_mask] = field[node_pairs[common_nodes_mask]]
 
-    interpolatied_field = torch.sum(field[enclosing_tris] * lambdas, dim=1)
+    interpolated_field = torch.sum(field[enclosing_tris] * lambdas, dim=1)
     if interpolation_filter is not None:
-        interpolatied_field = torch.stack([
-            interpolation_filter(e) for e in interpolatied_field.unbind(dim=0)
+        interpolated_field = torch.stack([
+            interpolation_filter(e) for e in interpolated_field.unbind(dim=0)
         ], dim=0)
-    new_field[delete_nodes_mask] = interpolatied_field
+    new_field[delete_nodes_mask] = interpolated_field
 
     return new_field

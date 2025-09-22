@@ -2,8 +2,8 @@
 import torch
 
 from dataset import Dataset
-from graph import Mesh, NodeType, interpolate_field, cells_to_edges, find_edge, find_edges_with
-from utils import BATCH, batch_dicts, get_triangle_aspect_ratio, get_triangle_sarea
+from graph import Mesh, NodeType, interpolate_field
+from utils import BATCH, batch_dicts
 from remesher.core import MeshState, get_sizing_field_tensor
 from remesher.remesher import Remesher
 
@@ -18,6 +18,7 @@ from typing import Any
 
 def plot_mesh(ax, mesh: Mesh, color="w", alpha=1.0):
     triangles = mesh["cells"][BATCH]
+
     type_mask = (mesh["node_type"][BATCH][triangles[:,0]]==NodeType.NORMAL).any(dim=-1).flatten()
     type_mask |= (mesh["node_type"][BATCH][triangles[:,1]]==NodeType.NORMAL).any(dim=-1).flatten()
     type_mask |= (mesh["node_type"][BATCH][triangles[:,2]]==NodeType.NORMAL).any(dim=-1).flatten()
@@ -82,7 +83,6 @@ plt.show()
 remesher = Remesher()
 remeshed_mesh = remesher(mesh1, S_i)
 
-
 """
 DISPLAY
 """
@@ -100,7 +100,7 @@ plot_mesh(ax2, remeshed_mesh)
 ax3.set_title("Target Mesh")
 plot_mesh(ax3, remeshed_mesh, color="r", alpha=0.5)
 # plot_mesh_state(ax3, collapse_ms, "r", alpha=0.5)
-plot_mesh(ax3, mesh2)
+plot_mesh(ax3, mesh2, alpha=0.5)
 
 
 fig.tight_layout()

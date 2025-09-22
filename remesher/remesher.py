@@ -369,4 +369,5 @@ class Remesher:
         ms = to_meshstate(mesh, sizing_field)
         ms = self.__split(ms)
         ms = self.__collapse(ms)
-        return from_meshstate(ms)
+        return mesh
+        # return from_meshstate(ms)
