@@ -64,26 +64,17 @@ def cells_to_edges(mesh: Mesh) -> tuple[torch.Tensor, torch.Tensor]:
         ], dim=0
     )
 
-    # compute the opposite nodes
-    opposites = -torch.ones((unique_packed_edges.shape[0], 2), dtype=torch.long, device=inverse.device)
+    # compute opposite nodes
+    opposites = -torch.ones((unique_packed_edges.shape[0], 2), device=unpacked_edges.device).long()
+    counts = torch.bincount(inverse, minlength=unique_packed_edges.shape[0])  # should be 1 (if edge on the border) or 2
 
-    mask = (inverse[None, :] == torch.arange(len(unique_packed_edges), device=inverse.device)[:, None])
-    opposites_count = torch.count_nonzero(mask, dim=-1)
-    border = opposites_count == 1
-    border_idx = torch.nonzero(border, as_tuple=True)[0].long()
-    interior_idx = torch.nonzero(~border, as_tuple=True)[0].long()
+    positions = torch.zeros_like(inverse)
+    positions[torch.cumsum(counts[inverse], dim=0) - 1] = 1
 
-    # 1 opposite node (on the border)
-    opposites_1 = torch.nonzero(mask[border_idx], as_tuple=True)[1]
-    opposites[border_idx, 0] = unpacked_opposite[opposites_1]
-    # 2 opposite nodes (on the interio)
-    opposites_2 = torch.nonzero(mask[interior_idx], as_tuple=True)[1].reshape((-1, 2))
-    opposites[interior_idx, 0] = unpacked_opposite[opposites_2[:,0]]
-    opposites[interior_idx, 1] = unpacked_opposite[opposites_2[:,1]]
+    opposites[inverse, positions] = unpacked_opposite
+    opposites = torch.concat([opposites, opposites])
 
-    opposites = torch.concat([opposites, opposites], dim=0)
-
-    return (edges, opposites)
+    return edges, opposites
     
 
 # TODO: handle batch size > 1

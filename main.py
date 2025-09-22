@@ -190,7 +190,7 @@ def rollout(device: torch.device, hyper: dict[str, Any], checkpoints: list[int|N
         loss.append(torch.sqrt(torch.nn.MSELoss()(targ_mesh_i["world_pos"], prev_meshs[0]["world_pos"])).item())
     
     # display_trajectory(pred_meshs[0], ds.meta, max_frame=None, title="Flag Simple")
-    display_prediction_target(pred_meshs[0], targ_mesh, ds.meta, title="Flag Simple", loss=loss, save=False, save_path=Path("img"))
+    display_prediction_target(pred_meshs[0], targ_mesh, ds.meta, title="Flag Simple", loss=loss, save=True, save_path=Path("img"))
     # display_trajectory_list([*pred_meshs, targ_mesh], [*[f"Pred {ck}" for ck in checkpoints], "Target"], ds.meta, "Flag Simple", save=False, save_path=Path("img"))
 
 if __name__ == "__main__":

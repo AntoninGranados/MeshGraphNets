@@ -84,6 +84,8 @@ def display_trajectory_list(meshes: list[Mesh], names: list[str], meta: dict, ti
 
             axs[a].set_title(f"{names[a]}", color="gray")
             axs[a].patch.set_edgecolor("w")
+            axs[a].patch.set_facecolor("k")
+            axs[a].patch.set_alpha(0.2)
             axs[a].patch.set_linewidth(1)
 
         subtitle = f"Frame: {i+1:>3}/{frame_count}"
@@ -91,6 +93,8 @@ def display_trajectory_list(meshes: list[Mesh], names: list[str], meta: dict, ti
             subtitle = f"Frame: {i+1:>3}/{frame_count}\nLoss (RMSE): {loss[i]:.4f}"
         fig.suptitle(f"{title}", fontsize=16, y=0.95)
         fig.text(0.5, 0.80, subtitle, ha="center", fontsize=10, color="white")
+        fig.patch.set_facecolor('k')
+        fig.patch.set_alpha(0.2)
 
         # fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.9))
         plt.draw()
