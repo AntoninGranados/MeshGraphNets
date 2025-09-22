@@ -39,7 +39,7 @@ def lr_lambda(step, hyper):
 def init_model(device: torch.device, hyper: dict[str, Any]) -> tuple[Model, torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR, int, list[float], list[float]]:
     print("Initializing model...")
 
-    model = Model(device, hyper["network"]["graph-net-blocks"])
+    model = Model(device)
     model.to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=hyper["training"]["start-lr"])
@@ -83,11 +83,13 @@ def init_from_checkpoint(device: torch.device, hyper: dict[str, Any], checkpoint
 
 
 def train(device: torch.device, hyper: dict[str, Any]) -> None:
-    train_ds = Dataset(Path("dataset", "sphere_dynamic"), stage="train")
+    train_ds = Dataset(Path("dataset", "sphere_dynamic"), stage="valid")    #! the "train" dataset is very very heavy
     valid_ds = Dataset(Path("dataset", "sphere_dynamic"), stage="valid")
     
-    train_loader = DataLoader(train_ds, batch_size = 1, shuffle = True, pin_memory = True)
-    valid_loader = DataLoader(train_ds, pin_memory = True)
+    # train_loader = DataLoader(train_ds, batch_size = 1, shuffle = True, pin_memory = True)
+    train_loader = DataLoader(train_ds, batch_size = 1, shuffle = True, num_workers = 8, prefetch_factor = 10)
+    # valid_loader = DataLoader(train_ds, pin_memory = True)
+    valid_loader = DataLoader(train_ds, num_workers = 8, prefetch_factor = 10)
     
     model, optimizer, scheduler, start_epoch, train_loss, valid_loss = init_model(device, hyper)
     # model, optimizer, scheduler, start_epoch, train_loss, valid_loss = init_from_checkpoint(device, hyper)
@@ -96,7 +98,7 @@ def train(device: torch.device, hyper: dict[str, Any]) -> None:
     # Warmup
     if start_epoch == -1:
         iter_loader = iter(train_loader)
-        for batch_id in tqdm(range(1000), desc="Warmup"):
+        for _ in tqdm(range(1000), desc="Warmup", file=sys.stdout):
             batch = move_batch_to(next(iter_loader), device)
             with torch.no_grad():
                 _ = model.loss(batch, train_ds.meta)
@@ -203,6 +205,6 @@ if __name__ == "__main__":
     with open(Path(".", "hyperparam.json"), "r") as file:
         hyper = json.loads(file.read())
 
-    # train(device, hyper)
-    rollout(device, hyper, [None], test_set="valid", test_idx=0)
+    train(device, hyper)
+    # rollout(device, hyper, [None], test_set="valid", test_idx=0)
     

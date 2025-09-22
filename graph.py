@@ -83,11 +83,12 @@ def cells_to_edges(mesh: Mesh) -> tuple[torch.Tensor, torch.Tensor]:
     
 
 # TODO: handle batch size > 1
+# FIXME: `radius` only work for CPU tensors, should use `torch.cdist` instead
 def compute_world_edges(mesh: Mesh, meta: dict, edges: torch.Tensor|None = None) -> torch.Tensor:
     if edges is None:
         edges, _ = cells_to_edges(mesh)
 
-    neighbours = radius(mesh["world_pos"][BATCH], mesh["world_pos"][BATCH], r=meta["collision_radius"]).rot90()
+    neighbours = radius(mesh["world_pos"][BATCH], mesh["world_pos"][BATCH], r=meta["collision_radius"]).t()
 
     edge_mask = ~(edges[:,None]==neighbours).all(dim=-1).any(dim=0)
     type_mask = (mesh["node_type"][BATCH][neighbours[:,0]]==NodeType.NORMAL).any(dim=-1).flatten()
@@ -129,8 +130,6 @@ def generate_graph(mesh: Mesh, meta: dict) -> MultiGraph:
         receivers=receivers
     )
     
-    #! compute world edge set
-    """
     world_edges = compute_world_edges(mesh, meta=meta, edges=mesh_edges)
     senders, receivers = world_edges[:,0], world_edges[:,0]
 
@@ -147,13 +146,12 @@ def generate_graph(mesh: Mesh, meta: dict) -> MultiGraph:
         senders=senders,
         receivers=receivers
     )
-    """
 
     return MultiGraph(
         node_features=node_features,
         edge_sets=[
             mesh_edge_set,
-            #! world_edge_set
+            world_edge_set
         ]
     )
 
@@ -161,10 +159,10 @@ def generate_graph(mesh: Mesh, meta: dict) -> MultiGraph:
 # TODO: find better names for `from_mesh` and `targ_mesh`
 def interpolate_field(from_mesh: Mesh, targ_mesh: Mesh, field: torch.Tensor, interpolation_filter: Callable[[torch.Tensor], torch.Tensor]|None=None) -> torch.Tensor:
     """Interpolates the field `field` comming from the target mesh `targ_mesh` using the nodes in `from_mesh`"""
-    from_normal_mask = from_mesh["node_type"][BATCH].flatten() == NodeType.NORMAL
-    targ_normal_mask = targ_mesh["node_type"][BATCH].flatten() == NodeType.NORMAL
-
-    nodes_dist = torch.cdist(from_mesh["mesh_pos"][BATCH], targ_mesh["mesh_pos"][BATCH])
+    from_normal_mask = from_mesh["node_type"].flatten() == NodeType.NORMAL
+    targ_normal_mask = targ_mesh["node_type"].flatten() == NodeType.NORMAL
+    
+    nodes_dist = torch.cdist(from_mesh["mesh_pos"], targ_mesh["mesh_pos"])
     nodes_dist[:,~targ_normal_mask] = float("inf")
 
     common_nodes_mask = (nodes_dist < 1e-3).any(dim=-1) & from_normal_mask
@@ -179,12 +177,12 @@ def interpolate_field(from_mesh: Mesh, targ_mesh: Mesh, field: torch.Tensor, int
     )
 
     # compute the enclosing triangle for each point
-    sorted_cells = targ_mesh["cells"][BATCH]
+    sorted_cells = targ_mesh["cells"]
     cell_mask = targ_normal_mask[sorted_cells[:,0]] | targ_normal_mask[sorted_cells[:,1]] | targ_normal_mask[sorted_cells[:,2]]
     sorted_cells = sorted_cells[cell_mask]
     tris, lambdas = find_enclosing_triangle(
-        from_mesh["mesh_pos"][BATCH][delete_nodes_mask],
-        targ_mesh["mesh_pos"][BATCH],
+        from_mesh["mesh_pos"][delete_nodes_mask],
+        targ_mesh["mesh_pos"],
         sorted_cells
     )
 

@@ -33,10 +33,9 @@ OPERATIONS ON TRIANGLES
 """
 def get_triangle_sarea(tris: torch.Tensor) -> torch.Tensor:
     """Compute the signed area of each triangle in a list"""
-    select = lambda tensor, dim, idx : torch.index_select(tensor, dim, torch.Tensor([idx]).type(torch.long))
-    BA = select(tris,-2,1) - select(tris,-2,0)
-    CB = select(tris,-2,2) - select(tris,-2,1)
-    det = select(BA,-1,0) * select(CB,-1,1) - select(BA,-1,1) * select(CB,-1,0)
+    BA = tris[...,1,:] - tris[...,0,:]
+    CB = tris[...,2,:] - tris[...,1,:]
+    det = BA[...,0] * CB[...,1] - BA[...,1] * CB[...,0]
     det = det.reshape(tris.shape[:-2])
     return det/2
 
@@ -48,17 +47,17 @@ def get_barycentric_coord(P: torch.Tensor, A: torch.Tensor, B: torch.Tensor, C: 
     ABP = torch.stack([A, B, P], dim=-2)
     tris = torch.stack([ABC, PBC, APC, ABP], dim=-3)
     sareas = get_triangle_sarea(tris)
-    sareaABC = sareas[:,0].unsqueeze(-1)
+    sareaABC = sareas[...,0].unsqueeze(-1)
 
-    # if the triangle is flat, return the parmameter if the linear interpolation between A and B
+    # if the triangle is flat, return the parmameter of the linear interpolation between A and B
     return torch.where(
         sareaABC == 0,  # flat triangle (division by 0)
         torch.stack([
             torch.norm(P-A, dim=-1)/torch.norm(B-A, dim=-1),
             torch.norm(P-B, dim=-1)/torch.norm(B-A, dim=-1),
-            torch.zeros(P.shape[0])
+            torch.zeros(P.shape[:-1])
         ], dim=-1),
-        sareas[:,1:] / sareaABC,
+        sareas[...,1:] / sareaABC,
     )
 
 # TODO: remove `pos` and directly pass the position in `A`, `B` and `C`
@@ -86,9 +85,38 @@ def find_enclosing_triangle(P: torch.Tensor, pos: torch.Tensor, tris: torch.Tens
     maxs = torch.max(torch.stack([A, B, C], dim=1), dim=1).values
 
     N = P.shape[0]
-    face_idx = torch.full((N,), -1, dtype=torch.long)
+    face_idx = torch.full((N,), -1).long()
     barycentric = torch.zeros((N, 3))
 
+    P_expanded = P.unsqueeze(1)
+    mins_expanded = mins.unsqueeze(0)
+    maxs_expanded = maxs.unsqueeze(0)
+    
+    #! should reduce the barycentric/sarea computation by using this mask
+    in_bbox = torch.all(
+        (P_expanded >= (mins_expanded - epsilon)) & (P_expanded <= (maxs_expanded + epsilon)), 
+        dim=2
+    )
+
+    A_expanded = A.unsqueeze(0).expand(P.shape[0], -1, -1)
+    B_expanded = B.unsqueeze(0).expand(P.shape[0], -1, -1)
+    C_expanded = C.unsqueeze(0).expand(P.shape[0], -1, -1)
+    P_tiled = P_expanded.expand(-1, tris.shape[0], -1)
+
+    lambdas = get_barycentric_coord(P_tiled, A_expanded, B_expanded, C_expanded)
+    sareas = get_triangle_sarea(torch.stack([A_expanded, B_expanded, C_expanded], dim=2))
+    correct_mask = (sareas >= epsilon) & torch.all(lambdas >= 0, dim=-1)
+    correct_indices = torch.argmax(correct_mask.long(), dim=1)
+
+    found_mask = torch.count_nonzero(correct_mask, dim=1) > 0
+
+    face_idx = torch.where(found_mask, correct_indices, -1)
+
+    batch_indices = torch.arange(P.shape[0], device=P.device)
+    barycentric = lambdas[batch_indices, correct_indices]
+    barycentric = torch.where(found_mask.unsqueeze(-1), barycentric, torch.full_like(barycentric, float('nan')))
+
+    """
     for pi in range(N):
         p = P[pi]
         # find candidate faces whose bbox contains P
@@ -103,5 +131,6 @@ def find_enclosing_triangle(P: torch.Tensor, pos: torch.Tensor, tris: torch.Tens
         found_tri = torch.count_nonzero(correct_tris) > 0
         face_idx[pi] = -1 if not found_tri else candidate_tris[correct_tris][0]
         barycentric[pi] = torch.Tensor([float("nan")]*3) if not found_tri else lambdas[correct_tris][0]
+    """
 
     return face_idx, barycentric

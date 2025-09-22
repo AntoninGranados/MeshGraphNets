@@ -11,7 +11,7 @@ class Model(torch.nn.Module):
                  device: torch.device,
                  node_input_size: int = 3 + NodeType.COUNT,     # n_i, (x_i^t- x_i^{t-1})
                  mesh_input_size: int = 7,                      # u_ij, |u_ij|, x_ij, |x_ij|
-                 world_input_size: int = 0,                     #! 4 : x_ij, |x_ij|
+                 world_input_size: int = 4,                     #! 4 : x_ij, |x_ij|
                  output_size: int = 3,                          # a_i
                  graph_net_blocks_count: int = 15
     ) -> None:
@@ -20,7 +20,7 @@ class Model(torch.nn.Module):
         self.node_normalizer = Normalizer(device, size=node_input_size)
         self.edge_normalizer = torch.nn.ModuleDict({
             "mesh": Normalizer(device, size=mesh_input_size),
-            # "world": Normalizer(device, size=world_input_size)
+            "world": Normalizer(device, size=world_input_size)
         })
         self.output_normalizer = Normalizer(device, size=3)
 
