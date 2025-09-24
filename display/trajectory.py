@@ -101,7 +101,7 @@ def display_trajectory_list(meshes: list[Mesh], names: list[str], meta: dict, ti
         plt.pause(meta["dt"])
 
         if save:
-            plt.savefig(Path(save_path, f"frame_{i:03}.png"), dpi=500)
+            plt.savefig(Path(save_path, f"frame_{i:03}.png"), dpi=500, transparent=True)
     
     plt.close()
     

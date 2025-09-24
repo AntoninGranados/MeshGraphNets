@@ -7,19 +7,26 @@ from network.normalizer import Normalizer
 from network.core import Encoder, GraphNetBlock, Decoder
 
 class Model(torch.nn.Module):
-    def __init__(self, device: torch.device, graph_net_blocks_count: int = 15):
+    def __init__(self,
+                 device: torch.device,
+                 node_input_size: int = 3 + NodeType.COUNT,     # n_i, (x_i^t- x_i^{t-1})
+                 mesh_input_size: int = 7,                      # u_ij, |u_ij|, x_ij, |x_ij|
+                 world_input_size: int = 4,                     #! 4 : x_ij, |x_ij|
+                 output_size: int = 3,                          # a_i
+                 graph_net_blocks_count: int = 15
+    ) -> None:
         super().__init__()
 
-        self.node_normalizer = Normalizer(device, size=3+NodeType.COUNT)    # n_i, (x_i^t- x_i^{t-1})
+        self.node_normalizer = Normalizer(device, size=node_input_size)
         self.edge_normalizer = torch.nn.ModuleDict({
-            "mesh": Normalizer(device, size=7), # u_ij, |u_ij|, x_ij, |x_ij|
-            # "world": Normalizer(device, size=0) # TODO
+            "mesh": Normalizer(device, size=mesh_input_size),
+            "world": Normalizer(device, size=world_input_size)
         })
         self.output_normalizer = Normalizer(device, size=3)
 
-        self.encoder = Encoder()
+        self.encoder = Encoder(node_input_size, mesh_input_size, world_input_size)
         self.graph_net_blocks = torch.nn.ModuleList([GraphNetBlock() for _ in range(graph_net_blocks_count)])
-        self.decoder = Decoder(output_size=3)   # nodes acceleration
+        self.decoder = Decoder(output_size=output_size)
 
         self.loss_fn = torch.nn.MSELoss()
 

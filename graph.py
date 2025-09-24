@@ -8,6 +8,7 @@ from collections import namedtuple
 from typing import Callable
 
 # node_type, world_pos, cells, mesh_pos
+# node_type, world_pos, cells, mesh_pos
 Mesh = dict[str, torch.Tensor]
 
 EdgeSet = namedtuple("EdgeSet", ["name", "edge_features", "senders", "receivers"])
@@ -87,12 +88,12 @@ def cells_to_edges(mesh: Mesh) -> tuple[torch.Tensor, torch.Tensor]:
     return edges.unsqueeze(0), opposites.unsqueeze(0)
 
 # TODO: handle batch size > 1
+# FIXME: `radius` only work for CPU tensors, should use `torch.cdist` instead
 def compute_world_edges(mesh: Mesh, meta: dict, edges: torch.Tensor|None = None) -> torch.Tensor:
     if edges is None:
         edges, _ = cells_to_edges(mesh)
     edges = edges[BATCH]
 
-    # compute all world edges (pair of nodes with distance smaller than `collision_radius`)
     neighbours = radius(mesh["world_pos"][BATCH], mesh["world_pos"][BATCH], r=meta["collision_radius"]).t()
 
     # only allow world edges where there are no mesh edges

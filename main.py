@@ -39,7 +39,7 @@ def lr_lambda(step, hyper):
 def init_model(device: torch.device, hyper: dict[str, Any]) -> tuple[Model, torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR, int, list[float], list[float]]:
     print("Initializing model...")
 
-    model = Model(device, hyper["network"]["graph-net-blocks"])
+    model = Model(device)
     model.to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=hyper["training"]["start-lr"])
@@ -59,7 +59,7 @@ def init_from_checkpoint(device: torch.device, hyper: dict[str, Any], checkpoint
     print(f"Loading model from {checkpoint_path}")
     last_checkpoint = torch.load(checkpoint_path, map_location=device)
 
-    model = Model(device, hyper["network"]["graph-net-blocks"])
+    model = Model(device)
     model.load_state_dict(last_checkpoint['model_state_dict'])
     model.to(device)
 
@@ -83,13 +83,13 @@ def init_from_checkpoint(device: torch.device, hyper: dict[str, Any], checkpoint
 
 
 def train(device: torch.device, hyper: dict[str, Any]) -> None:
-    train_ds = Dataset(Path("dataset", "sphere_dynamic"), stage="valid")
+    train_ds = Dataset(Path("dataset", "sphere_dynamic"), stage="valid")    #! the "train" dataset is very very heavy
     valid_ds = Dataset(Path("dataset", "sphere_dynamic"), stage="valid")
     
     # train_loader = DataLoader(train_ds, batch_size = 1, shuffle = True, pin_memory = True)
-    train_loader = DataLoader(train_ds, batch_size = 1, shuffle = True, pin_memory = True, num_workers=8, prefetch_factor=10)
+    train_loader = DataLoader(train_ds, batch_size = 1, shuffle = True, num_workers = 8, prefetch_factor = 10)
     # valid_loader = DataLoader(train_ds, pin_memory = True)
-    valid_loader = DataLoader(train_ds, pin_memory = True, num_workers=8, prefetch_factor=10)
+    valid_loader = DataLoader(train_ds, num_workers = 8, prefetch_factor = 10)
     
     model, optimizer, scheduler, start_epoch, train_loss, valid_loss = init_model(device, hyper)
     # model, optimizer, scheduler, start_epoch, train_loss, valid_loss = init_from_checkpoint(device, hyper)
@@ -98,7 +98,7 @@ def train(device: torch.device, hyper: dict[str, Any]) -> None:
     # Warmup
     if start_epoch == -1:
         iter_loader = iter(train_loader)
-        for batch in tqdm(range(1000), desc="Warmup"):
+        for _ in tqdm(range(1000), desc="Warmup", file=sys.stdout):
             batch = move_batch_to(next(iter_loader), device)
             with torch.no_grad():
                 _ = model.loss(batch, train_ds.meta)
@@ -170,7 +170,7 @@ def rollout(device: torch.device, hyper: dict[str, Any], checkpoints: list[int|N
     ]
     targ_mesh = {k: v.unsqueeze(0) for k,v in mesh.items()}
     
-    max_frame = 399
+    max_frame = 10
     prev_meshs = [
         {k: v.clone() for k,v in pred_mesh.items()}
         for pred_mesh in pred_meshs
