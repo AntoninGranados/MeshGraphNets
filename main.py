@@ -83,20 +83,23 @@ def init_from_checkpoint(device: torch.device, hyper: dict[str, Any], checkpoint
 
 
 def train(device: torch.device, hyper: dict[str, Any]) -> None:
-    train_ds = Dataset(Path("dataset", "flag_minimal"), stage="train")
-    valid_ds = Dataset(Path("dataset", "flag_minimal"), stage="valid")
+    train_ds = Dataset(Path("dataset", "sphere_dynamic"), stage="valid")
+    valid_ds = Dataset(Path("dataset", "sphere_dynamic"), stage="valid")
     
-    train_loader = DataLoader(train_ds, batch_size = 1, shuffle = True, pin_memory = True)
-    valid_loader = DataLoader(train_ds, pin_memory = True)
+    # train_loader = DataLoader(train_ds, batch_size = 1, shuffle = True, pin_memory = True)
+    train_loader = DataLoader(train_ds, batch_size = 1, shuffle = True, pin_memory = True, num_workers=8, prefetch_factor=10)
+    # valid_loader = DataLoader(train_ds, pin_memory = True)
+    valid_loader = DataLoader(train_ds, pin_memory = True, num_workers=8, prefetch_factor=10)
     
-    # model, optimizer, scheduler, start_epoch, train_loss, valid_loss = init_model(device, hyper)
-    model, optimizer, scheduler, start_epoch, train_loss, valid_loss = init_from_checkpoint(device, hyper)
+    model, optimizer, scheduler, start_epoch, train_loss, valid_loss = init_model(device, hyper)
+    # model, optimizer, scheduler, start_epoch, train_loss, valid_loss = init_from_checkpoint(device, hyper)
     model.train()
 
     # Warmup
     if start_epoch == -1:
-        for batch in tqdm(train_loader, desc="Warmup"):
-            batch = move_batch_to(batch, device)
+        iter_loader = iter(train_loader)
+        for batch in tqdm(range(1000), desc="Warmup"):
+            batch = move_batch_to(next(iter_loader), device)
             with torch.no_grad():
                 _ = model.loss(batch, train_ds.meta)
 
@@ -202,6 +205,6 @@ if __name__ == "__main__":
     with open(Path(".", "hyperparam.json"), "r") as file:
         hyper = json.loads(file.read())
 
-    # train(device, hyper)
-    rollout(device, hyper, [None], test_set="valid", test_idx=0)
+    train(device, hyper)
+    # rollout(device, hyper, [None], test_set="valid", test_idx=0)
     

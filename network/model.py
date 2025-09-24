@@ -40,8 +40,8 @@ class Model(torch.nn.Module):
 
         return graph
     
-    def __forward_pass(self, input: Mesh, is_training: bool) -> torch.Tensor:
-        graph = generate_graph(input)
+    def __forward_pass(self, input: Mesh, meta: dict, is_training: bool) -> torch.Tensor:
+        graph = generate_graph(input, meta)
         graph = self.__normalize_graph(graph, is_training)
         latent_graph = self.encoder(graph)
         for graph_net_block in self.graph_net_blocks:
@@ -66,7 +66,7 @@ class Model(torch.nn.Module):
         return pred_mesh
 
     def loss(self, mesh: Mesh, meta: dict[str, Any], is_training: bool = True) -> torch.Tensor:
-        prediction = self.__forward_pass(mesh, is_training)
+        prediction = self.__forward_pass(mesh, meta, is_training)
 
         curr_pos = mesh["world_pos"]
         prev_pos = mesh["prev|world_pos"]
@@ -80,5 +80,5 @@ class Model(torch.nn.Module):
         return self.loss_fn(prediction[loss_mask], target[loss_mask])
 
     def __call__(self, mesh: Mesh, meta: dict[str, Any]) -> Mesh:
-        prediction = self.__forward_pass(mesh, is_training=False)
+        prediction = self.__forward_pass(mesh, meta, is_training=False)
         return self.__integrate_pos(mesh, prediction, meta)

@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any, override
 from copy import deepcopy
 
-from graph import NodeType, Mesh
+from graph import NodeType, Mesh, interpolate_field
+from utils import BATCH
 
 def move_batch_to(batch: Mesh, device: torch.device):
     return {k: v.to(device) for k, v in batch.items()}
@@ -33,10 +34,20 @@ class Dataset(torch.utils.data.Dataset[Mesh]):
 
     @override
     def __getitem__(self, idx: int) -> Mesh:
-        sim = idx // (self.meta["trajectory_length"]-2)
-        time = idx % (self.meta["trajectory_length"]-2)
+        def from_idx(idx: int) -> tuple[int, int]:
+            sim = idx // (self.meta["trajectory_length"]-2)
+            time = idx % (self.meta["trajectory_length"]-2)+1
+            return sim, time
+        
+        sim, time = from_idx(idx)
         mesh = {k: v[time] for k,v in self.content[sim].items()}
 
+        #! should only be done during training (but the "sphere_dynamic" training dataset is very heavy so I use the validation set for now)
+        sim, time = from_idx(idx-1)
+        prev = {k: v[time] for k,v in self.content[sim].items()}
+        sim, time = from_idx(idx+1)
+        targ = {k: v[time] for k,v in self.content[sim].items()}
+        mesh = self.__add_targets(mesh, prev, targ)
         if self.stage == "train":
             mesh = self.__add_noise(mesh)
             
@@ -63,16 +74,18 @@ class Dataset(torch.utils.data.Dataset[Mesh]):
 
             out[key] = data
 
-        out = self.__add_targets(out)
-
         return out
     
-    def __add_targets(self, data: Mesh) -> Mesh:
-        out = {}
-        for key in data.keys():
-            out[key] = data[key][1:-1]
-        out["prev|world_pos"] = data["world_pos"][0:-2]
-        out["target|world_pos"] = data["world_pos"][2:]
+    def __add_targets(self, curr: Mesh, prev: Mesh, targ: Mesh) -> Mesh:
+        out = deepcopy(curr)
+
+        prev_mesh = {k: v.unsqueeze(0) for k,v in prev.items()}
+        curr_mesh = {k: v.unsqueeze(0) for k,v in curr.items()}
+        targ_mesh = {k: v.unsqueeze(0) for k,v in targ.items()}
+
+        out["prev|world_pos"] = interpolate_field(curr_mesh, prev_mesh, prev_mesh["world_pos"])[0]
+        out["target|world_pos"] = interpolate_field(curr_mesh, targ_mesh, targ_mesh["world_pos"])[0]
+            
         return out
 
     def __add_noise(self, data: Mesh) -> Mesh:

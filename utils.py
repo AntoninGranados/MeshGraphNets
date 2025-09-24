@@ -10,7 +10,7 @@ def batch_dicts(inputs: list[dict[Any, torch.Tensor]]):
     for i in range(1, len(inputs)):
         batch = {
             k: torch.concatenate([
-                v, inputs[i][k].unsqueeze(0)
+                v.unsqueeze(0), inputs[i][k]
             ], dim=0) for k, v in batch.items()
         }
     return batch
@@ -60,6 +60,15 @@ def get_barycentric_coord(P: torch.Tensor, A: torch.Tensor, B: torch.Tensor, C: 
         ], dim=-1),
         sareas[:,1:] / sareaABC,
     )
+
+# TODO: remove `pos` and directly pass the position in `A`, `B` and `C`
+def get_triangle_aspect_ratio(pos, A, B, C) -> torch.Tensor:
+    a = torch.norm(pos[A].unsqueeze(0) - pos[B].unsqueeze(0))
+    b = torch.norm(pos[B].unsqueeze(0) - pos[C].unsqueeze(0))
+    c = torch.norm(pos[C].unsqueeze(0) - pos[A].unsqueeze(0))
+    s = (a+b+c)/2
+
+    return a*b*c / (8 * (s-a)*(s-b)*(s-c))
 
 def find_enclosing_triangle(P: torch.Tensor, pos: torch.Tensor, tris: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """
