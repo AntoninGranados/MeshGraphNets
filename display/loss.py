@@ -15,6 +15,9 @@ if __name__ == "__main__":
     valid_loss_file = Path(checkpoint_dir, "validation_loss.txt")
 
     plt.style.use('dark_background')
+    fig = plt.figure()
+    plt.rcParams["font.family"] = "monospace"
+    fignum = fig.number
 
     length = 399*11
     train_loss = []
@@ -37,12 +40,26 @@ if __name__ == "__main__":
         # xdata = np.arange(len(train_loss))
         # param, _ = curve_fit(func, xdata, train_loss)
 
-        plt.clf()
-        plt.tight_layout()
-        plt.plot(valid_loss, "g", label="Validation loss", lw=1)
-        plt.plot(train_loss, "r", label="Training loss")
-        # plt.plot(func(xdata, *param), "c--", label="Loss estimation")
-        plt.semilogy()
-        plt.legend()
+        fig.clf()
+        ax = fig.add_subplot()
+        ax.plot(valid_loss, "g", label="Validation loss", lw=1)
+        ax.plot(train_loss, "r", label="Training loss")
+        # ax.plot(func(xdata, *param), "c--", label="Loss estimation")
+        ax.set_xlabel("Epochs", color="gray")
+        ax.set_ylabel("MSE Loss", color="gray")
+        # ax.semilogy()
+        ax.legend()
+
+        ax.patch.set_edgecolor("w")
+        ax.patch.set_facecolor("k")
+        ax.patch.set_alpha(0.2)
+        ax.patch.set_linewidth(1)
+
+        fig.suptitle(f"Model Loss", fontsize=16, y=0.95)
+        fig.patch.set_facecolor('k')
+        fig.patch.set_alpha(0.2)
+        fig.tight_layout()
         plt.draw()
         plt.pause(0.1)
+
+        if not plt.fignum_exists(fignum): break

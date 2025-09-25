@@ -51,9 +51,12 @@ class Model(torch.nn.Module):
         graph = generate_graph(input, meta)
         graph = self.__normalize_graph(graph, is_training)
         latent_graph = self.encoder(graph)
-        for graph_net_block in self.graph_net_blocks:
+
+        for i, graph_net_block in enumerate(self.graph_net_blocks):
             latent_graph = graph_net_block(latent_graph)
-        return self.decoder(latent_graph)
+
+        decoded_graph = self.decoder(latent_graph)
+        return decoded_graph
 
     def __integrate_pos(self, mesh: Mesh, prediction: torch.Tensor, meta: dict[str, Any]) -> Mesh:
         """Second order integration"""
@@ -84,7 +87,9 @@ class Model(torch.nn.Module):
         loss_mask = mesh["node_type"] == NodeType.NORMAL
         loss_mask = loss_mask.squeeze(-1)
 
-        return self.loss_fn(prediction[loss_mask], target[loss_mask])
+        loss = self.loss_fn(prediction[loss_mask], target[loss_mask])
+
+        return loss
 
     def __call__(self, mesh: Mesh, meta: dict[str, Any]) -> Mesh:
         prediction = self.__forward_pass(mesh, meta, is_training=False)

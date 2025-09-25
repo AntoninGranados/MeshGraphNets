@@ -6,8 +6,8 @@ from utils import find_enclosing_triangle, BATCH
 from enum import IntEnum
 from collections import namedtuple
 from typing import Callable
+import sys
 
-# node_type, world_pos, cells, mesh_pos
 # node_type, world_pos, cells, mesh_pos
 Mesh = dict[str, torch.Tensor]
 
@@ -88,22 +88,35 @@ def cells_to_edges(mesh: Mesh) -> tuple[torch.Tensor, torch.Tensor]:
     return edges.unsqueeze(0), opposites.unsqueeze(0)
 
 # TODO: handle batch size > 1
-# FIXME: `radius` only work for CPU tensors, should use `torch.cdist` instead
+# FIXME: `radius` only work for CPU on MacOS, should use `torch.cdist` instead
 def compute_world_edges(mesh: Mesh, meta: dict, edges: torch.Tensor|None = None) -> torch.Tensor:
     if edges is None:
         edges, _ = cells_to_edges(mesh)
     edges = edges[BATCH]
 
-    neighbours = radius(mesh["world_pos"][BATCH], mesh["world_pos"][BATCH], r=meta["collision_radius"]).t()
+    # find all paires of nodes that are at most `collision_radius` from each other
+    # cdist = torch.cdist(mesh["world_pos"][BATCH], mesh["world_pos"][BATCH])
+    # in_radius = cdist <= meta["collision_radius"]
+    # in_radius &= ~torch.eye(len(in_radius)).to(in_radius.device).bool()
+    # neighbors = torch.nonzero(in_radius)
+
+    world_pos = mesh["world_pos"][BATCH]
+    if sys.platform == "darwin":
+        world_pos = world_pos.to("cpu")
+
+    neighbors = radius(world_pos, world_pos, r=meta["collision_radius"]).t()
+
+    if sys.platform == "darwin":
+        neighbors = neighbors.to(mesh["world_pos"].device)
 
     # only allow world edges where there are no mesh edges
-    edge_mask = ~(edges.unsqueeze(1) == neighbours.unsqueeze(0)).all(dim=-1).any(dim=0)
+    edge_mask = ~(edges.unsqueeze(1) == neighbors.unsqueeze(0)).all(dim=-1).any(dim=0)
 
     # only allow world edges where at least one node is `NORMAL`
-    type_mask = (mesh["node_type"][BATCH][neighbours[:,0]]==NodeType.NORMAL).any(dim=-1).flatten()
-    type_mask |= (mesh["node_type"][BATCH][neighbours[:,1]]==NodeType.NORMAL).any(dim=-1).flatten()
+    type_mask = (mesh["node_type"][BATCH][neighbors[:,0]]==NodeType.NORMAL).any(dim=-1).flatten()
+    type_mask |= (mesh["node_type"][BATCH][neighbors[:,1]]==NodeType.NORMAL).any(dim=-1).flatten()
 
-    return neighbours[edge_mask & type_mask]
+    return neighbors[edge_mask & type_mask].unsqueeze(0)
 
 """
 MESH OPERATIONS
@@ -138,7 +151,8 @@ def generate_graph(mesh: Mesh, meta: dict) -> MultiGraph:
         senders=senders,
         receivers=receivers
     )
-    
+
+    """
     world_edges = compute_world_edges(mesh, meta=meta, edges=mesh_edges)
     senders, receivers = world_edges[...,0][BATCH], world_edges[...,1][BATCH]
 
@@ -155,29 +169,40 @@ def generate_graph(mesh: Mesh, meta: dict) -> MultiGraph:
         senders=senders,
         receivers=receivers
     )
+    """
 
     return MultiGraph(
         node_features=node_features,
         edge_sets=[
             mesh_edge_set,
-            world_edge_set
+            # world_edge_set
         ]
     )
 
 # TODO: handle batch size > 1
-# TODO: find better names for `from_mesh` and `targ_mesh`
-def interpolate_field(from_mesh: Mesh, targ_mesh: Mesh, field: torch.Tensor, interpolation_filter: Callable[[torch.Tensor], torch.Tensor]|None=None) -> torch.Tensor:
-    """Interpolates the field `field` comming from the target mesh `targ_mesh` using the nodes in `from_mesh`"""
-    from_normal_mask = from_mesh["node_type"][BATCH].flatten() == NodeType.NORMAL
-    targ_normal_mask = targ_mesh["node_type"][BATCH].flatten() == NodeType.NORMAL
-    
-    nodes_dist = torch.cdist(from_mesh["mesh_pos"][BATCH], targ_mesh["mesh_pos"][BATCH])
-    nodes_dist[:,~targ_normal_mask] = float("inf")
+def interpolate_field(dst_mesh: Mesh, src_mesh: Mesh, field: torch.Tensor, interpolation_filter: Callable[[torch.Tensor], torch.Tensor]|None=None) -> torch.Tensor:
+    """ Interpolates the field `field` from source mesh `src_mesh` to destination mesh `dst_mesh` using barycentric interpolation """
 
-    common_nodes_mask = (nodes_dist < 1e-3).any(dim=-1) & from_normal_mask
-    delete_nodes_mask = ~common_nodes_mask & from_normal_mask
+    dst_node_mask = dst_mesh["node_type"][BATCH].flatten() == NodeType.NORMAL
+    dst_node_mask |= dst_mesh["node_type"][BATCH].flatten() == NodeType.HANDLE
+    src_node_mask = src_mesh["node_type"][BATCH].flatten() == NodeType.NORMAL
+    src_node_mask |= src_mesh["node_type"][BATCH].flatten() == NodeType.HANDLE
 
-    # compute node pairs (from_mesh_i <-> targ_mesh_j | nan if not NORMAL or not in the target mesh)
+
+    # TODO: compute only the distance between normal/handle nodes then between collider nodes (would need to keep track of the indices)
+    nodes_dist = torch.cdist(dst_mesh["mesh_pos"][BATCH], src_mesh["mesh_pos"][BATCH])
+
+    # find the closest nodes for each collider nodes to set the field value for them
+    #! this is just to not keep the with a zero field but they still should not be uses as in mesh spece they could be overlaping
+    # non_normal_node_present = bool(((torch.count_nonzero(~dst_node_mask) > 0) & (torch.count_nonzero(~src_node_mask) > 0)).item())
+    # if non_normal_node_present:
+    #     closest_collider = torch.argmin(nodes_dist[:,~src_node_mask][~dst_node_mask], dim=-1)
+
+    nodes_dist[:,~src_node_mask] = float("inf")
+    common_nodes_mask = (nodes_dist < 1e-3).any(dim=-1) & dst_node_mask
+    removed_nodes_mask = ~common_nodes_mask & dst_node_mask
+
+    # compute node pairs (dst_mesh_i <-> src_mesh_j | nan if not NORMAL or not in the target mesh)
     node_pairs = torch.argmin(nodes_dist, dim=-1)
     node_pairs = torch.where(
         common_nodes_mask,
@@ -186,28 +211,33 @@ def interpolate_field(from_mesh: Mesh, targ_mesh: Mesh, field: torch.Tensor, int
     )
 
     # compute the enclosing triangle for each point
-    sorted_cells = targ_mesh["cells"][BATCH]
-    cell_mask = targ_normal_mask[sorted_cells[:,0]] | targ_normal_mask[sorted_cells[:,1]] | targ_normal_mask[sorted_cells[:,2]]
+    sorted_cells = src_mesh["cells"][BATCH]
+    cell_mask = src_node_mask[sorted_cells[:,0]] | src_node_mask[sorted_cells[:,1]] | src_node_mask[sorted_cells[:,2]]
     sorted_cells = sorted_cells[cell_mask]
     tris, lambdas = find_enclosing_triangle(
-        from_mesh["mesh_pos"][BATCH][delete_nodes_mask],
-        targ_mesh["mesh_pos"][BATCH],
+        dst_mesh["mesh_pos"][BATCH][removed_nodes_mask],
+        src_mesh["mesh_pos"][BATCH],
         sorted_cells
     )
 
     enclosing_tris = sorted_cells[tris]
     lambdas_shape = (-1, 3, *[1]*(len(field[BATCH].shape)-1))
     lambdas = lambdas.reshape(lambdas_shape)
+    if torch.isnan(lambdas).any():
+        print("lambdas is NaN"); exit(1)
 
     # fill the interpolated field
-    new_field = torch.zeros((from_normal_mask.shape[0], *field[BATCH].shape[1:]))
-    new_field[common_nodes_mask] = field[BATCH][node_pairs[common_nodes_mask]]
+    new_field = torch.zeros((dst_node_mask.shape[0], *field[BATCH].shape[1:]))
 
+    new_field[common_nodes_mask] = field[BATCH][node_pairs[common_nodes_mask]]
     interpolated_field = torch.sum(field[BATCH][enclosing_tris] * lambdas, dim=1)
     if interpolation_filter is not None:
         interpolated_field = torch.stack([
             interpolation_filter(e) for e in interpolated_field.unbind(dim=0)
         ], dim=0)
-    new_field[delete_nodes_mask] = interpolated_field
+    new_field[removed_nodes_mask] = interpolated_field
+
+    # if non_normal_node_present:
+    #     new_field[~dst_node_mask] = field[BATCH][closest_collider]
 
     return new_field.unsqueeze(0)

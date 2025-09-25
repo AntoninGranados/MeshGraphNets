@@ -5,14 +5,13 @@
 
     "training": {
         "steps": 10000000,
+        "max-epoch-len": 5000,
 
         "decay-steps": 5000000,
         "decay-rate": 0.1,
         "start-lr": 1e-4,
         "min-lr": 1e-6,
 
-        "checkpoint-dir": "./checkpoints_flag_minimal"
-    },
-
-    "r_W": 0.1
+        "checkpoint-dir": "./checkpoints"
+    }
 }

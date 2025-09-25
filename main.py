@@ -72,48 +72,51 @@ def init_from_checkpoint(device: torch.device, hyper: dict[str, Any], checkpoint
     )
     scheduler.load_state_dict(last_checkpoint['scheduler_state_dict'])
 
-    last_step = (last_checkpoint["epoch"]+1) * 11 * 399 #! hardcoded length
     train_loss_file = Path(hyper["training"]["checkpoint-dir"], "loss.txt")
-    train_loss = list(np.loadtxt(train_loss_file))[:last_step]
+    train_loss = list(np.loadtxt(train_loss_file))
+    # train_loss = []
 
     valid_loss_file = Path(hyper["training"]["checkpoint-dir"], "validation_loss.txt")
     valid_loss = list(np.loadtxt(valid_loss_file))
+    # valid_loss = []
 
     return model, optimizer, scheduler, last_checkpoint['epoch'], train_loss, valid_loss
 
 
 def train(device: torch.device, hyper: dict[str, Any]) -> None:
-    train_ds = Dataset(Path("dataset", "sphere_dynamic"), stage="valid")    #! the "train" dataset is very very heavy
-    valid_ds = Dataset(Path("dataset", "sphere_dynamic"), stage="valid")
+    print("Loading training datasets   (length: 1000) ...")
+    train_ds = Dataset(Path("dataset", "sphere_dynamic"), stage="train", estimated_size=1000)
+    print("Loading validation datasets (length:  100) ...")
+    valid_ds = Dataset(Path("dataset", "sphere_dynamic"), stage="valid", estimated_size=100)
     
-    # train_loader = DataLoader(train_ds, batch_size = 1, shuffle = True, pin_memory = True)
     train_loader = DataLoader(train_ds, batch_size = 1, shuffle = True, num_workers = 8, prefetch_factor = 10)
-    # valid_loader = DataLoader(train_ds, pin_memory = True)
-    valid_loader = DataLoader(train_ds, num_workers = 8, prefetch_factor = 10)
+    valid_loader = DataLoader(valid_ds, batch_size = 1, shuffle = True, num_workers = 8, prefetch_factor = 10)
     
-    model, optimizer, scheduler, start_epoch, train_loss, valid_loss = init_model(device, hyper)
-    # model, optimizer, scheduler, start_epoch, train_loss, valid_loss = init_from_checkpoint(device, hyper)
+    # model, optimizer, scheduler, start_epoch, train_loss, valid_loss = init_model(device, hyper)
+    model, optimizer, scheduler, start_epoch, train_loss, valid_loss = init_from_checkpoint(device, hyper)
     model.train()
 
     # Warmup
     if start_epoch == -1:
-        iter_loader = iter(train_loader)
+        iter_train_loader = iter(train_loader)
         for _ in tqdm(range(1000), desc="Warmup", file=sys.stdout):
-            batch = move_batch_to(next(iter_loader), device)
+            batch = move_batch_to(next(iter_train_loader), device)
             with torch.no_grad():
                 _ = model.loss(batch, train_ds.meta)
 
-    epochs = int(hyper["training"]["steps"])//int(len(train_loader))
+    epoch_len = min(int(len(train_loader)), hyper["training"]["max-epoch-len"])     # limit epoch length (could be around 50_000 with large dataset)
+    epochs = int(hyper["training"]["steps"])//epoch_len
     for e in range(start_epoch+1, epochs):
 
         # update the model
         model.train()
         loss_sum, it = 0, 0
-        loop = tqdm(train_loader, desc=f"Train {e:>4}/{epochs}", ncols=100, file=sys.stdout)
-        for batch in loop:
+        loop = tqdm(range(epoch_len), desc=f"Train {e:>4}/{epochs}", ncols=100, file=sys.stdout)
+        iter_train_loader = iter(train_loader)
+        for _ in loop:
             optimizer.zero_grad()
 
-            batch = move_batch_to(batch, device)
+            batch = move_batch_to(next(iter_train_loader), device)
             loss = model.loss(batch, train_ds.meta)
             loss.backward()
             optimizer.step()
@@ -129,9 +132,10 @@ def train(device: torch.device, hyper: dict[str, Any]) -> None:
         # compute validation loss
         model.eval()
         loss_sum, it = 0, 0
-        loop = tqdm(valid_loader, desc=f"Valid {e:>4}/{epochs}", ncols=100, file=sys.stdout)
-        for batch in loop:
-            batch = move_batch_to(batch, device)
+        loop = tqdm(range(epoch_len), desc=f"Valid {e:>4}/{epochs}", ncols=100, file=sys.stdout)
+        iter_valid_loader = iter(valid_loader)
+        for _ in loop:
+            batch = move_batch_to(next(iter_valid_loader), device)
             with torch.no_grad():
                 loss = model.loss(batch, valid_ds.meta, is_training=False)
             loss_sum += loss.item()
@@ -153,6 +157,7 @@ def train(device: torch.device, hyper: dict[str, Any]) -> None:
         print()
 
 def rollout(device: torch.device, hyper: dict[str, Any], checkpoints: list[int|None] = [None], test_set: str = "valid", test_idx: int = 0) -> None:
+    print(f"Loading {test_set} datasets ...")
     ds = Dataset(Path("dataset", "flag_minimal"), stage=test_set)
     
     models = []
@@ -162,7 +167,7 @@ def rollout(device: torch.device, hyper: dict[str, Any], checkpoints: list[int|N
         models.append(model)
 
     # rollout
-    mesh = ds[test_idx*399]
+    mesh = ds[test_idx*(ds.meta["trajectory_length"]-2)]
 
     pred_meshs = [
         {k: v.unsqueeze(0) for k,v in mesh.items()}
@@ -170,7 +175,7 @@ def rollout(device: torch.device, hyper: dict[str, Any], checkpoints: list[int|N
     ]
     targ_mesh = {k: v.unsqueeze(0) for k,v in mesh.items()}
     
-    max_frame = 10
+    max_frame = 399
     prev_meshs = [
         {k: v.clone() for k,v in pred_mesh.items()}
         for pred_mesh in pred_meshs
@@ -189,12 +194,11 @@ def rollout(device: torch.device, hyper: dict[str, Any], checkpoints: list[int|N
 
         targ_mesh_i = {k: v.unsqueeze(0) for k,v in ds[test_idx*399+i].items()}
         targ_mesh = {k: torch.concat([v, targ_mesh_i[k]], dim=0) for k,v in targ_mesh.items()}
-        
         loss.append(torch.sqrt(torch.nn.MSELoss()(targ_mesh_i["world_pos"], prev_meshs[0]["world_pos"])).item())
-    
-    # display_trajectory(pred_meshs[0], ds.meta, max_frame=None, title="Flag Simple")
-    display_prediction_target(pred_meshs[0], targ_mesh, ds.meta, title="Flag Simple", loss=loss, save=True, save_path=Path("img"))
-    # display_trajectory_list([*pred_meshs, targ_mesh], [*[f"Pred {ck}" for ck in checkpoints], "Target"], ds.meta, "Flag Simple", save=False, save_path=Path("img"))
+
+    # display_trajectory_list(pred_meshs, ["Prediction"], ds.meta, title="Sphere Dynamic")
+    # display_trajectory_list([*pred_meshs, targ_mesh], [*[f"Pred {ck}" for ck in checkpoints], "Target"], ds.meta, "Flag Minimal", save=False, save_path=Path("img"))
+    display_prediction_target(pred_meshs[0], targ_mesh, ds.meta, title="Flag Minimal", save=True, save_path=Path("img"))
 
 if __name__ == "__main__":
     print(f"PyTorch version : {torch.__version__}")
@@ -207,4 +211,3 @@ if __name__ == "__main__":
 
     train(device, hyper)
     # rollout(device, hyper, [None], test_set="valid", test_idx=0)
-    

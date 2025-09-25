@@ -5,6 +5,7 @@ from typing import Any
 # TODO: handle batch size > 1
 BATCH = 0   #! where we use only the first batch and should be handle corretly for multiple batch
 
+#! should move this function to dataset.py
 def batch_dicts(inputs: list[dict[Any, torch.Tensor]]):
     batch = {k: v.unsqueeze(0) for k, v in inputs[0].items()}
     for i in range(1, len(inputs)):
@@ -114,23 +115,6 @@ def find_enclosing_triangle(P: torch.Tensor, pos: torch.Tensor, tris: torch.Tens
 
     batch_indices = torch.arange(P.shape[0], device=P.device)
     barycentric = lambdas[batch_indices, correct_indices]
-    barycentric = torch.where(found_mask.unsqueeze(-1), barycentric, torch.full_like(barycentric, float('nan')))
-
-    """
-    for pi in range(N):
-        p = P[pi]
-        # find candidate faces whose bbox contains P
-        mask = (mins[:,0] - epsilon <= p[0]) & (p[0] <= maxs[:,0] + epsilon) & \
-               (mins[:,1] - epsilon <= p[1]) & (p[1] <= maxs[:,1] + epsilon)
-        candidate_tris = torch.nonzero(mask).flatten()
-
-        a, b, c = A[candidate_tris], B[candidate_tris], C[candidate_tris]
-        lambdas = get_barycentric_coord(p.tile((candidate_tris.shape[0], 1)), a, b, c)
-        correct_tris = (get_triangle_sarea(torch.stack([a, b, c], dim=1)) >= epsilon) & torch.all(lambdas >= 0, dim=1)
-        
-        found_tri = torch.count_nonzero(correct_tris) > 0
-        face_idx[pi] = -1 if not found_tri else candidate_tris[correct_tris][0]
-        barycentric[pi] = torch.Tensor([float("nan")]*3) if not found_tri else lambdas[correct_tris][0]
-    """
+    #! barycentric = torch.where(found_mask.unsqueeze(-1), barycentric, torch.full_like(barycentric, float('nan')))
 
     return face_idx, barycentric

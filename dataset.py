@@ -15,17 +15,27 @@ def move_batch_to(batch: Mesh, device: torch.device):
     return {k: v.to(device) for k, v in batch.items()}
 
 class Dataset(torch.utils.data.Dataset[Mesh]):
-    def __init__(self, data_path: Path|str, stage: str, noise_scale: float = 3e-3, noise_gamma: float = 1e-1):
+    parsing_idx: int = 0
+
+    def __init__(self, 
+                 data_path: Path|str,
+                 stage: str,
+                 estimated_size: int|None = None,
+                 noise_scale: float = 1e-3,
+                 noise_gamma: float = 1e-1
+    ):
         super().__init__()
 
         self.stage = stage
+
+        self.estimated_size = estimated_size
 
         self.noise_scale = noise_scale
         self.noise_gamma = noise_gamma
 
         with open(Path(data_path, "meta.json"), "r") as file:
             self.meta = json.loads(file.read())
-            
+        
         self.content = list(iter(TFRecordDataset(
             data_path = str(Path(data_path, f"{stage}.tfrecord")),
             index_path = None,
@@ -36,18 +46,18 @@ class Dataset(torch.utils.data.Dataset[Mesh]):
     def __getitem__(self, idx: int) -> Mesh:
         def from_idx(idx: int) -> tuple[int, int]:
             sim = idx // (self.meta["trajectory_length"]-2)
-            time = idx % (self.meta["trajectory_length"]-2)+1
+            time = 1 + idx % (self.meta["trajectory_length"]-2)
             return sim, time
         
-        sim, time = from_idx(idx)
-        mesh = {k: v[time] for k,v in self.content[sim].items()}
 
-        #! should only be done during training (but the "sphere_dynamic" training dataset is very heavy so I use the validation set for now)
-        sim, time = from_idx(idx-1)
-        prev = {k: v[time] for k,v in self.content[sim].items()}
-        sim, time = from_idx(idx+1)
-        targ = {k: v[time] for k,v in self.content[sim].items()}
+        sim, time = from_idx(idx)
+
+        prev = {k: v[time-1] for k,v in self.content[sim].items()}
+        mesh = {k: v[time] for k,v in self.content[sim].items()}
+        targ = {k: v[time+1] for k,v in self.content[sim].items()}
+
         mesh = self.__add_targets(mesh, prev, targ)
+
         if self.stage == "train":
             mesh = self.__add_noise(mesh)
             
@@ -58,6 +68,12 @@ class Dataset(torch.utils.data.Dataset[Mesh]):
         return len(self.content) * (self.meta["trajectory_length"]-2)
 
     def __parse(self, proto: dict) -> Mesh:
+        self.parsing_idx += 1
+        if self.estimated_size == None:
+            print(f"Parsing: {self.parsing_idx:>4}", end="\r")
+        else:
+            print(f"Parsing: {self.parsing_idx/self.estimated_size*100:5.1f}%", end="\r")
+
         out = {}
         for key, info in self.meta["features"].items():
             data = torch.tensor(np.frombuffer(proto[key], np.dtype(info["dtype"])))
@@ -83,9 +99,10 @@ class Dataset(torch.utils.data.Dataset[Mesh]):
         curr_mesh = {k: v.unsqueeze(0) for k,v in curr.items()}
         targ_mesh = {k: v.unsqueeze(0) for k,v in targ.items()}
 
+        # out["prev|world_pos"] = prev_mesh["world_pos"][0]
         out["prev|world_pos"] = interpolate_field(curr_mesh, prev_mesh, prev_mesh["world_pos"])[0]
         out["target|world_pos"] = interpolate_field(curr_mesh, targ_mesh, targ_mesh["world_pos"])[0]
-            
+        
         return out
 
     def __add_noise(self, data: Mesh) -> Mesh:

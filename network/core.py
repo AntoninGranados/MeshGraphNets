@@ -10,13 +10,13 @@ def make_linear(input_size: int, output_size: int) -> torch.nn.Linear:
     
     return linear
 
-def make_mlp(input_size: int, output_size: int, layer_norm: bool = True) -> torch.nn.Module:
+def make_mlp(input_size: int, output_size: int, latent_size: int = 128, layer_norm: bool = True) -> torch.nn.Module:
     layers = [
-        make_linear(input_size, 128),
+        make_linear(input_size, latent_size),
         torch.nn.ReLU(),
-        make_linear(128, 128),
+        make_linear(latent_size, latent_size),
         torch.nn.ReLU(),
-        make_linear(128, output_size),
+        make_linear(latent_size, output_size),
     ]
 
     if layer_norm:
@@ -33,10 +33,10 @@ class Encoder(torch.nn.Module):
                  latent_size: int = 128
     ) -> None:
         super().__init__()
-        self.node_encoder = make_mlp(input_size=node_input_size, output_size=latent_size)
+        self.node_encoder = make_mlp(input_size=node_input_size, output_size=latent_size, latent_size=latent_size)
         self.edge_encoders = torch.nn.ModuleDict({
-            "mesh" : make_mlp(input_size=mesh_input_size, output_size=latent_size),
-            "world": make_mlp(input_size=world_input_size, output_size=latent_size)
+            "mesh" : make_mlp(input_size=mesh_input_size, output_size=latent_size, latent_size=latent_size),
+            "world": make_mlp(input_size=world_input_size, output_size=latent_size, latent_size=latent_size)
         })
 
     def __call__(self, graph: MultiGraph) -> MultiGraph:
@@ -57,7 +57,7 @@ class Decoder(torch.nn.Module):
                  latent_size: int = 128
     ) -> None:
         super().__init__()
-        self.node_decoder = make_mlp(input_size=latent_size, output_size=output_size, layer_norm=False)
+        self.node_decoder = make_mlp(input_size=latent_size, output_size=output_size, latent_size=latent_size, layer_norm=False)
 
     def __call__(self, latent_graph: MultiGraph) -> torch.Tensor:
         decoded_features = self.node_decoder(latent_graph.node_features)
@@ -67,10 +67,10 @@ class GraphNetBlock(torch.nn.Module):
     def __init__(self, latent_size: int = 128):
         super().__init__()
 
-        self.node_mlp = make_mlp(input_size=3*latent_size, output_size=latent_size) # v_i, sum e_ij^M, sum e_ij^W
+        self.node_mlp = make_mlp(input_size=3*latent_size, output_size=latent_size, latent_size=latent_size) # v_i, sum e_ij^M, sum e_ij^W
         self.edge_mlps = torch.nn.ModuleDict({
-            "mesh" : make_mlp(input_size=3*latent_size, output_size=latent_size), # e_ij^M, v_i, v_j
-            "world": make_mlp(input_size=3*latent_size, output_size=latent_size)  # e_ij^W, v_i, v_j
+            "mesh" : make_mlp(input_size=3*latent_size, output_size=latent_size, latent_size=latent_size), # e_ij^M, v_i, v_j
+            "world": make_mlp(input_size=3*latent_size, output_size=latent_size, latent_size=latent_size)  # e_ij^W, v_i, v_j
         })
 
     def __update_edge_features(self, node_features: torch.Tensor, edge_set: EdgeSet) -> torch.Tensor:
