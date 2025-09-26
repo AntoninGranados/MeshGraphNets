@@ -158,7 +158,7 @@ def train(device: torch.device, hyper: dict[str, Any]) -> None:
 
 def rollout(device: torch.device, hyper: dict[str, Any], checkpoints: list[int|None] = [None], test_set: str = "valid", test_idx: int = 0) -> None:
     print(f"Loading {test_set} datasets ...")
-    ds = Dataset(Path("dataset", "flag_minimal"), stage=test_set)
+    ds = Dataset(Path("dataset", "sphere_dynamic"), stage=test_set)
     
     models = []
     for checkpoint in checkpoints:
@@ -167,15 +167,18 @@ def rollout(device: torch.device, hyper: dict[str, Any], checkpoints: list[int|N
         models.append(model)
 
     # rollout
-    mesh = ds[test_idx*(ds.meta["trajectory_length"]-2)]
+    # mesh = ds[test_idx*(ds.meta["trajectory_length"]-2)]
+    # pred_meshs = [
+    #     {k: v.unsqueeze(0) for k,v in mesh.items()} for _ in range(len(models))
+    # ]
+    # targ_mesh = {k: v.unsqueeze(0) for k,v in mesh.items()}
 
-    pred_meshs = [
-        {k: v.unsqueeze(0) for k,v in mesh.items()}
-        for _ in range(len(models))
-    ]
-    targ_mesh = {k: v.unsqueeze(0) for k,v in mesh.items()}
+    mesh1 = ds[test_idx*(ds.meta["trajectory_length"]-2)+5]
+    pred_meshs = []
+    pred_meshs.append({k: v.unsqueeze(0) for k,v in mesh1.items()})
+
     
-    max_frame = 399
+    max_frame = 300
     prev_meshs = [
         {k: v.clone() for k,v in pred_mesh.items()}
         for pred_mesh in pred_meshs
@@ -187,18 +190,18 @@ def rollout(device: torch.device, hyper: dict[str, Any], checkpoints: list[int|N
             with torch.no_grad():
                 pred_mesh_i = models[m](current_mesh, ds.meta)
 
-            mesh_i_cpu = {k: v.cpu() for k,v in pred_mesh_i.items()}
+            mesh_i_cpu = {k: v.detach().cpu() for k,v in pred_mesh_i.items()}
             pred_meshs[m] = {k: torch.concat([v, mesh_i_cpu[k]], dim=0) for k,v in pred_meshs[m].items()}
 
             prev_meshs[m] = mesh_i_cpu
 
-        targ_mesh_i = {k: v.unsqueeze(0) for k,v in ds[test_idx*399+i].items()}
-        targ_mesh = {k: torch.concat([v, targ_mesh_i[k]], dim=0) for k,v in targ_mesh.items()}
-        loss.append(torch.sqrt(torch.nn.MSELoss()(targ_mesh_i["world_pos"], prev_meshs[0]["world_pos"])).item())
+        # targ_mesh_i = {k: v.unsqueeze(0) for k,v in ds[test_idx*399+i].items()}
+        # targ_mesh = {k: torch.concat([v, targ_mesh_i[k]], dim=0) for k,v in targ_mesh.items()}
+        # loss.append(torch.sqrt(torch.nn.MSELoss()(targ_mesh_i["world_pos"], prev_meshs[0]["world_pos"])).item())
 
-    # display_trajectory_list(pred_meshs, ["Prediction"], ds.meta, title="Sphere Dynamic")
+    display_trajectory_list(pred_meshs, ["Prediction"], ds.meta, title="Sphere Dynamic", save=True, save_path=Path("img"))
     # display_trajectory_list([*pred_meshs, targ_mesh], [*[f"Pred {ck}" for ck in checkpoints], "Target"], ds.meta, "Flag Minimal", save=False, save_path=Path("img"))
-    display_prediction_target(pred_meshs[0], targ_mesh, ds.meta, title="Flag Minimal", save=True, save_path=Path("img"))
+    # display_prediction_target(pred_meshs[0], targ_mesh, ds.meta, title="Flag Minimal", save=True, save_path=Path("img"))
 
 if __name__ == "__main__":
     print(f"PyTorch version : {torch.__version__}")
@@ -209,5 +212,5 @@ if __name__ == "__main__":
     with open(Path(".", "hyperparam.json"), "r") as file:
         hyper = json.loads(file.read())
 
-    train(device, hyper)
-    # rollout(device, hyper, [None], test_set="valid", test_idx=0)
+    # train(device, hyper)
+    rollout(device, hyper, [None], test_set="valid", test_idx=0)

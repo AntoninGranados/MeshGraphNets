@@ -30,15 +30,17 @@ if __name__ == "__main__":
         subprocess.run(["rsync", "-q", f"agranados-24@{device}:{str(Path(save_file, "validation_loss.txt"))}", "./checkpoints"])
         
         if train_loss_file.exists():
-            train_loss = list(np.loadtxt(train_loss_file))
+            train_loss = np.loadtxt(train_loss_file)
 
         if valid_loss_file.exists():
-            valid_loss = list(np.loadtxt(valid_loss_file))
-
-        # def func(x, a, b, c, d):
+            valid_loss = np.loadtxt(valid_loss_file)
+        
+        # def func(x, a, b, c):
         #     return a * np.exp(-b * x) + c
         # xdata = np.arange(len(train_loss))
-        # param, _ = curve_fit(func, xdata, train_loss)
+        # xdata = xdata[~np.isnan(train_loss)]
+        # ydata = train_loss[~np.isnan(train_loss)]
+        # param, _ = curve_fit(func, xdata, ydata)
 
         fig.clf()
         ax = fig.add_subplot()
@@ -47,7 +49,7 @@ if __name__ == "__main__":
         # ax.plot(func(xdata, *param), "c--", label="Loss estimation")
         ax.set_xlabel("Epochs", color="gray")
         ax.set_ylabel("MSE Loss", color="gray")
-        # ax.semilogy()
+        ax.semilogy()
         ax.legend()
 
         ax.patch.set_edgecolor("w")

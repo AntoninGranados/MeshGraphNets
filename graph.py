@@ -152,7 +152,6 @@ def generate_graph(mesh: Mesh, meta: dict) -> MultiGraph:
         receivers=receivers
     )
 
-    """
     world_edges = compute_world_edges(mesh, meta=meta, edges=mesh_edges)
     senders, receivers = world_edges[...,0][BATCH], world_edges[...,1][BATCH]
 
@@ -169,13 +168,12 @@ def generate_graph(mesh: Mesh, meta: dict) -> MultiGraph:
         senders=senders,
         receivers=receivers
     )
-    """
 
     return MultiGraph(
         node_features=node_features,
         edge_sets=[
             mesh_edge_set,
-            # world_edge_set
+            world_edge_set
         ]
     )
 
