@@ -29,7 +29,6 @@ class Normalizer(torch.nn.Module):
     def __std(self):
         safe_count = torch.clamp(self.acc_count, min=1)
         var = self.acc_sum_sqr / safe_count - self.__mean()**2
-        # var = torch.clamp(var, min=0.0)
         return torch.clamp(torch.sqrt(var), min=self.std_epsilon)
 
 

@@ -1,6 +1,6 @@
 import torch
 
-from graph import Mesh, NodeType, cells_to_edges
+from graph import Mesh, NodeType, compute_mesh_edges
 from remesher.miniellipse import miniellipse
 from utils import aggregate, batch_dicts, BATCH
 
@@ -21,7 +21,7 @@ MeshState = namedtuple(
 )
 
 def to_meshstate(mesh: Mesh, sizing_field: torch.Tensor) -> MeshState:
-    edges, opposites = cells_to_edges(mesh)
+    edges, opposites = compute_mesh_edges(mesh)
     edges, opposites = edges[BATCH], opposites[BATCH]
     edges = edges[:edges.shape[0]//2]  # only use one way edges (same computation for the others)
     opposites = opposites[:opposites.shape[0]//2]  # only use one way edges (same computation for the others)
@@ -67,7 +67,7 @@ def closest_SDP(S: torch.Tensor) -> torch.Tensor:
 # TODO: handle batch size > 1
 # TODO: do not compute for nodes where NodeType != NORMAL
 def get_sizing_field_tensor(mesh: Mesh):
-    edges, _ = cells_to_edges(mesh)
+    edges, _ = compute_mesh_edges(mesh)
     edges = edges[BATCH]
 
     senders, receivers = edges[:,0], edges[:,1]

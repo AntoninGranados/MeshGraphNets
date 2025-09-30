@@ -38,7 +38,7 @@ def find_edges_with(a, edges) -> torch.Tensor:
     candidate = torch.nonzero((edges[:,0] == a) | (edges[:,1] == a)).squeeze()
     return candidate
 
-def cells_to_edges(mesh: Mesh) -> tuple[torch.Tensor, torch.Tensor]:
+def compute_mesh_edges(mesh: Mesh) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Compute the graph edges from the cells (triangles) and the opposites nodes for each edge
     """
@@ -85,20 +85,15 @@ def cells_to_edges(mesh: Mesh) -> tuple[torch.Tensor, torch.Tensor]:
     opposites2 = opposites2.reshape((-1,2))
     opposites[edge_indices] = opposites2
 
+    opposites = torch.concat([opposites, opposites])
+
     return edges.unsqueeze(0), opposites.unsqueeze(0)
 
 # TODO: handle batch size > 1
-# FIXME: `radius` only work for CPU on MacOS, should use `torch.cdist` instead
 def compute_world_edges(mesh: Mesh, meta: dict, edges: torch.Tensor|None = None) -> torch.Tensor:
     if edges is None:
-        edges, _ = cells_to_edges(mesh)
+        edges, _ = compute_mesh_edges(mesh)
     edges = edges[BATCH]
-
-    # find all paires of nodes that are at most `collision_radius` from each other
-    # cdist = torch.cdist(mesh["world_pos"][BATCH], mesh["world_pos"][BATCH])
-    # in_radius = cdist <= meta["collision_radius"]
-    # in_radius &= ~torch.eye(len(in_radius)).to(in_radius.device).bool()
-    # neighbors = torch.nonzero(in_radius)
 
     world_pos = mesh["world_pos"][BATCH]
     if sys.platform == "darwin":
@@ -132,7 +127,7 @@ def generate_graph(mesh: Mesh, meta: dict) -> MultiGraph:
     ], dim=-1)
     
     # compute mesh edge set
-    mesh_edges, _ = cells_to_edges(mesh)
+    mesh_edges, _ = compute_mesh_edges(mesh)
     senders, receivers = mesh_edges[...,0][BATCH], mesh_edges[...,1][BATCH]
     rel_world_pos = (torch.index_select(mesh["world_pos"], 1, senders) -
                         torch.index_select(mesh["world_pos"], 1, receivers))

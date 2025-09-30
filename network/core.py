@@ -29,15 +29,15 @@ class Encoder(torch.nn.Module):
     def __init__(self,
                  node_input_size: int,
                  mesh_input_size: int,
-                 world_input_size: int,
+                 world_input_size: int|None = None,
                  latent_size: int = 128
     ) -> None:
         super().__init__()
         self.node_encoder = make_mlp(input_size=node_input_size, output_size=latent_size, latent_size=latent_size)
-        self.edge_encoders = torch.nn.ModuleDict({
-            "mesh" : make_mlp(input_size=mesh_input_size, output_size=latent_size, latent_size=latent_size),
-            "world": make_mlp(input_size=world_input_size, output_size=latent_size, latent_size=latent_size)
-        })
+        self.edge_encoders = torch.nn.ModuleDict()
+        self.edge_encoders["mesh"] = make_mlp(input_size=mesh_input_size, output_size=latent_size, latent_size=latent_size)
+        if world_input_size != None:
+            self.edge_encoders["world"] = make_mlp(input_size=world_input_size, output_size=latent_size, latent_size=latent_size)
 
     def __call__(self, graph: MultiGraph) -> MultiGraph:
         latent_nodes = self.node_encoder(graph.node_features)
@@ -64,14 +64,14 @@ class Decoder(torch.nn.Module):
         return decoded_features
 
 class GraphNetBlock(torch.nn.Module):
-    def __init__(self, latent_size: int = 128):
+    def __init__(self, has_world_edge: bool = False, latent_size: int = 128):
         super().__init__()
 
         self.node_mlp = make_mlp(input_size=3*latent_size, output_size=latent_size, latent_size=latent_size) # v_i, sum e_ij^M, sum e_ij^W
-        self.edge_mlps = torch.nn.ModuleDict({
-            "mesh" : make_mlp(input_size=3*latent_size, output_size=latent_size, latent_size=latent_size), # e_ij^M, v_i, v_j
-            "world": make_mlp(input_size=3*latent_size, output_size=latent_size, latent_size=latent_size)  # e_ij^W, v_i, v_j
-        })
+        self.edge_mlps = torch.nn.ModuleDict()
+        self.edge_mlps["mesh"] = make_mlp(input_size=3*latent_size, output_size=latent_size, latent_size=latent_size) # e_ij^M, v_i, v_j
+        if has_world_edge:
+            self.edge_mlps["world"] = make_mlp(input_size=3*latent_size, output_size=latent_size, latent_size=latent_size)  # e_ij^W, v_i, v_j
 
     def __update_edge_features(self, node_features: torch.Tensor, edge_set: EdgeSet) -> torch.Tensor:
         v_i = torch.index_select(node_features, 1, edge_set.senders)

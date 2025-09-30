@@ -1,6 +1,6 @@
 import torch
 
-from graph import Mesh, NodeType, interpolate_field, cells_to_edges, find_edge, find_edges_with
+from graph import Mesh, NodeType, interpolate_field, compute_mesh_edges, find_edge, find_edges_with
 from utils import get_triangle_aspect_ratio, get_triangle_sarea
 from remesher.core import MeshState, EPS, AR_THRESHOLD, closest_SDP, to_meshstate, from_meshstate
 

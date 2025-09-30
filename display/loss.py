@@ -42,10 +42,19 @@ if __name__ == "__main__":
         # ydata = train_loss[~np.isnan(train_loss)]
         # param, _ = curve_fit(func, xdata, ydata)
 
+        w = np.ones(2)
+        
+        n = np.convolve(np.ones_like(valid_loss), w, mode="same")
+        valid_loss = np.convolve(valid_loss, w, mode="same") / n
+
+        n = np.convolve(np.ones_like(train_loss), w, mode="same")
+        train_loss = np.convolve(train_loss, w, mode="same") / n
+
         fig.clf()
         ax = fig.add_subplot()
-        ax.plot(valid_loss, "g", label="Validation loss", lw=1)
+
         ax.plot(train_loss, "r", label="Training loss")
+        ax.plot(valid_loss, "g", label="Validation loss", lw=1)
         # ax.plot(func(xdata, *param), "c--", label="Loss estimation")
         ax.set_xlabel("Epochs", color="gray")
         ax.set_ylabel("MSE Loss", color="gray")

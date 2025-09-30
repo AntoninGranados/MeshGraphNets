@@ -1,8 +1,9 @@
 
 import torch
+from torch_geometric.data import HeteroData
 
 from dataset import Dataset, move_batch_to
-from graph import Mesh, NodeType, interpolate_field, compute_world_edges, generate_graph
+from graph import Mesh, NodeType, interpolate_field, compute_world_edges, generate_graph, compute_mesh_edges
 from utils import BATCH, batch_dicts
 from remesher.core import MeshState, get_sizing_field_tensor, to_meshstate
 from remesher.remesher import Remesher
@@ -115,13 +116,15 @@ def generate_uniform_mesh(src_mesh: Mesh, N: int = 5) -> Mesh:
     return uniform_mesh
 
 
+
+"""
+#! ====================== Uniform Mesh from the Ground Truth dataset ======================
 with open(Path(".", "hyperparam.json"), "r") as file:
         hyper = json.loads(file.read())
 
 ds = Dataset(Path("dataset", "sphere_dynamic"), stage="valid")
 loader = torch.utils.data.DataLoader(ds, batch_size = 1, shuffle = True)
 
-#! ====================== Uniform Mesh from the Ground Truth dataset ======================
 plt.style.use('dark_background')
 fig = plt.figure()
 fig.set_size_inches((6, 4))
@@ -183,15 +186,17 @@ for i in tqdm(range(max_frame), "Computing frames", file=sys.stdout):
     # plt.savefig(f"img/frame_{i:03}.png", dpi=500)
     plt.draw()
     plt.pause(0.1)
-
-
-# 1.337563753075897699e+00
-# 7.372470567574724853e-01
-# 2.618722502758726312e-01
+"""
 
 
 """
 #! ====================== ROLLOUT ON UNIFORM MESH ======================
+with open(Path(".", "hyperparam.json"), "r") as file:
+        hyper = json.loads(file.read())
+
+ds = Dataset(Path("dataset", "sphere_dynamic"), stage="valid")
+loader = torch.utils.data.DataLoader(ds, batch_size = 1, shuffle = True)
+
 device = torch.device("mps")
 checkpoint_path = sorted(list(Path(hyper["training"]["checkpoint-dir"]).glob("*.pt")))[-1]
 last_checkpoint = torch.load(checkpoint_path, map_location=device)
@@ -202,10 +207,10 @@ model.to(device)
 model.eval()
 
 traj_len = ds.meta["trajectory_length"]
-traj = 0
+traj = 4 
 time_idx = 0
 
-pred_mesh = generate_uniform_mesh(batch_dicts([ds[traj_len*traj + time_idx]]), N=32)
+pred_mesh = generate_uniform_mesh(batch_dicts([ds[traj_len*traj + time_idx]]), N=30)
 prev_mesh = {k: v.clone().to(device) for k,v in pred_mesh.items()}
 
 plt.style.use('dark_background')
@@ -214,7 +219,7 @@ fig.set_size_inches((6, 4))
 fig.subplots_adjust(left=0.02, bottom=0.05, right=0.98, top=0.75)
 plt.rcParams["font.family"] = "monospace"
 
-max_frame = 200
+max_frame = 300
 for i in tqdm(range(max_frame), "Computing frames", file=sys.stdout):
 
     # target
@@ -274,3 +279,87 @@ for i in tqdm(range(max_frame), "Computing frames", file=sys.stdout):
     plt.draw()
     plt.pause(0.1)
 """
+
+with open(Path(".", "hyperparam.json"), "r") as file:
+        hyper = json.loads(file.read())
+
+ds = Dataset(Path("dataset", "sphere_dynamic"), stage="valid")
+mesh = batch_dicts([ds[100]])
+
+node = "node"
+mesh_edge = (node, "mesh", node)
+world_edge = (node, "world", node)
+
+# Node edges
+mesh_pos  = mesh["mesh_pos"][BATCH]
+world_pos = mesh["world_pos"][BATCH]
+prev_world = mesh["prev|world_pos"][BATCH]
+node_type = mesh["node_type"][BATCH].squeeze(-1).long()
+
+data = HeteroData()
+data[node].mesh_pos = mesh_pos
+data[node].world_pos = world_pos
+data[node].type = node_type.unsqueeze(-1)
+
+velocities = world_pos - prev_world
+types_onehot = torch.nn.functional.one_hot(node_type, NodeType.COUNT).to(velocities.dtype)
+data[node].x = torch.cat([velocities, types_onehot.to(velocities.dtype)], dim=-1)
+
+# Mesh edges
+mesh_edges, opposites = compute_mesh_edges(mesh)
+mesh_edges = mesh_edges[BATCH]
+opposites = opposites[BATCH]  
+
+senders, receivers = mesh_edges[...,0].long(), mesh_edges[...,1].long()
+edge_index = torch.stack([senders, receivers], dim=0)
+data[mesh_edge].edge_index = edge_index
+
+rel_world_pos = world_pos[senders] - world_pos[receivers]
+rel_mesh_pos  = mesh_pos[senders] - mesh_pos[receivers]
+mesh_edge_attr = torch.cat([
+    rel_world_pos,
+    torch.norm(rel_world_pos, dim=-1, keepdim=True),
+    rel_mesh_pos,
+    torch.norm(rel_mesh_pos, dim=-1, keepdim=True),
+], dim=-1)
+data[mesh_edge].x = mesh_edge_attr
+data[mesh_edge].opposites = opposites
+
+# World edges
+world_edges = compute_world_edges(mesh, meta=ds.meta, edges=mesh_edges.unsqueeze(0))
+world_edges = world_edges[BATCH]
+senders, receivers = world_edges[...,0], world_edges[...,1]
+edge_index = torch.stack([senders, receivers], dim=0)
+data[world_edge].edge_index = edge_index
+
+rel_world_pos = (torch.index_select(world_pos, 0, senders) -
+                    torch.index_select(world_pos, 0, receivers))
+world_edge_features = torch.concat([
+    rel_world_pos,
+    torch.norm(rel_world_pos, dim=-1, keepdim=True),
+], dim=-1)
+data[world_edge].x = world_edge_features
+
+# Remove unused edges (edges connected two non-normal nodes)
+active_edges = torch.nonzero(((data[node].type[data[mesh_edge].edge_index]).squeeze(-1) == NodeType.NORMAL).any(0)).squeeze(-1)
+data = data.edge_subgraph({mesh_edge: active_edges})
+
+# latent edge features
+v_i = data[node].x[data[mesh_edge].edge_index[0]]
+v_j = data[node].x[data[mesh_edge].edge_index[1]]
+features = torch.concat([ v_i, v_j, data[mesh_edge].x], dim=-1)
+
+# latent node features
+features = [data[node].x]
+
+mesh_shape = (data[node].x.shape[0], data[mesh_edge].x.shape[1])
+mesh_sum_eij = torch.zeros(mesh_shape).index_add_(0, data[mesh_edge].edge_index[1], data[mesh_edge].x)
+features.append(mesh_sum_eij)
+
+if world_edge in data.edge_types:
+    world_shape = (data[node].x.shape[0], data[world_edge].x.shape[1])
+    world_sum_eij = torch.zeros(world_shape).index_add_(0, data[world_edge].edge_index[1], data[world_edge].x)
+    features.append(world_sum_eij)
+
+features = torch.concat(features, dim=-1)
+print(features.shape)
