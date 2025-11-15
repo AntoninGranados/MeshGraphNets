@@ -10,8 +10,6 @@
         "decay-steps": 5000000,
         "decay-rate": 0.1,
         "start-lr": 1e-4,
-        "min-lr": 1e-6,
-
-        "checkpoint-dir": "./checkpoints"
+        "min-lr": 1e-6
     }
 }

@@ -1,109 +1,126 @@
 import torch
+from torch import nn
 
-from graph import NodeType, EdgeSet, MultiGraph
+from torch_geometric.data import HeteroData
+from torch_geometric.nn import MessagePassing
+from utils import *
 
-def make_linear(input_size: int, output_size: int) -> torch.nn.Linear:
-    linear = torch.nn.Linear(input_size, output_size)
-    
-    # Use the Xavier/Glorot distribution as initial distribution (like Tensorflow)
-    torch.nn.init.xavier_uniform_(linear.weight)
-    
-    return linear
+class MLP(nn.Module):
+    def __init__(self, widths, layer_norm: bool = True):
+        super().__init__()
 
-def make_mlp(input_size: int, output_size: int, latent_size: int = 128, layer_norm: bool = True) -> torch.nn.Module:
-    layers = [
-        make_linear(input_size, latent_size),
-        torch.nn.ReLU(),
-        make_linear(latent_size, latent_size),
-        torch.nn.ReLU(),
-        make_linear(latent_size, output_size),
-    ]
+        layers = []
 
-    if layer_norm:
-        layers.append(torch.nn.LayerNorm(output_size))
+        n_in = widths[0]
+        for w in widths[1:-1]:
+            layers.append(nn.Linear(n_in, w))
+            layers.append(nn.ReLU())
+            n_in = w
 
-    return torch.nn.Sequential(*layers)
+        layers.append(nn.Linear(n_in, widths[-1]))
 
+        if layer_norm:
+            layers.append(nn.LayerNorm(widths[-1]))
 
-class Encoder(torch.nn.Module):
+        self.layers = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.layers(x)
+
+def make_mlp(input_size: int, output_size: int, latent_size: int = 128, num_hidden_layers: int = 1, layer_norm: bool = True) -> nn.Module:
+    widths = [input_size] + [latent_size] * num_hidden_layers + [output_size]
+    return MLP(widths, layer_norm)
+
+class Encoder(nn.Module):
     def __init__(self,
                  node_input_size: int,
-                 mesh_input_size: int,
-                 world_input_size: int|None = None,
+                 mesh_edge_input_size: int,
                  latent_size: int = 128
     ) -> None:
         super().__init__()
-        self.node_encoder = make_mlp(input_size=node_input_size, output_size=latent_size, latent_size=latent_size)
-        self.edge_encoders = torch.nn.ModuleDict()
-        self.edge_encoders["mesh"] = make_mlp(input_size=mesh_input_size, output_size=latent_size, latent_size=latent_size)
-        if world_input_size != None:
-            self.edge_encoders["world"] = make_mlp(input_size=world_input_size, output_size=latent_size, latent_size=latent_size)
+        self.node_encoder = make_mlp(node_input_size, latent_size, latent_size)
 
-    def __call__(self, graph: MultiGraph) -> MultiGraph:
-        latent_nodes = self.node_encoder(graph.node_features)
+        self.edge_encoders = nn.ModuleDict()
+        self.edge_encoders["mesh"] = make_mlp(mesh_edge_input_size, latent_size, latent_size)
 
-        edge_sets = []
-        for edge_set in graph.edge_sets:
-            latent = self.edge_encoders[edge_set.name](edge_set.edge_features)
-            edge_sets.append(edge_set._replace(
-                edge_features=latent
-            ))
+    def __call__(self, sample: HeteroData) -> HeteroData:
+        sample[NODE].features = self.node_encoder(sample[NODE].features)
 
-        return MultiGraph(latent_nodes, edge_sets)
+        sample[MESH].features = self.edge_encoders["mesh"](sample[MESH].features)
 
-class Decoder(torch.nn.Module):
+        return sample
+
+class Decoder(nn.Module):
     def __init__(self,
                  output_size: int,
                  latent_size: int = 128
     ) -> None:
         super().__init__()
-        self.node_decoder = make_mlp(input_size=latent_size, output_size=output_size, latent_size=latent_size, layer_norm=False)
+        self.node_decoder = make_mlp(latent_size, output_size, latent_size, layer_norm=False)
 
-    def __call__(self, latent_graph: MultiGraph) -> torch.Tensor:
-        decoded_features = self.node_decoder(latent_graph.node_features)
-        return decoded_features
+    def __call__(self, sample: HeteroData) -> HeteroData:
+        sample[NODE].features = self.node_decoder(sample[NODE].features)
+        return sample
 
-class GraphNetBlock(torch.nn.Module):
-    def __init__(self, has_world_edge: bool = False, latent_size: int = 128):
-        super().__init__()
+class GraphNetBlock(MessagePassing):
+    def __init__(self, latent_size: int = 128):
+        super().__init__(aggr='add')
+        self.node_mlp = make_mlp(2 * latent_size, latent_size)  # [features, aggregated] -> latent
+        self.edge_mlp = make_mlp(3 * latent_size, latent_size)  # [features_i, features_j, edge_features] -> latent
 
-        self.node_mlp = make_mlp(input_size=3*latent_size, output_size=latent_size, latent_size=latent_size) # v_i, sum e_ij^M, sum e_ij^W
-        self.edge_mlps = torch.nn.ModuleDict()
-        self.edge_mlps["mesh"] = make_mlp(input_size=3*latent_size, output_size=latent_size, latent_size=latent_size) # e_ij^M, v_i, v_j
-        if has_world_edge:
-            self.edge_mlps["world"] = make_mlp(input_size=3*latent_size, output_size=latent_size, latent_size=latent_size)  # e_ij^W, v_i, v_j
+        self.inspector.inspect_signature(self.message_mesh)
 
-    def __update_edge_features(self, node_features: torch.Tensor, edge_set: EdgeSet) -> torch.Tensor:
-        v_i = torch.index_select(node_features, 1, edge_set.senders)
-        v_j = torch.index_select(node_features, 1, edge_set.receivers)
-        features = torch.concat([ v_i, v_j, edge_set.edge_features], dim=-1)
-        return self.edge_mlps[edge_set.name](features)
+        self._user_args = self.inspector.get_flat_param_names(
+            ["message_mesh", "aggregate", "update"], exclude=list(self.special_args))
+
+    def forward(self, sample):
+        return self.propagate(sample)
     
-    def __update_node_features(self, node_features: torch.Tensor, edge_sets: list[EdgeSet]) -> torch.Tensor:
-        features = [node_features]
+    def __call__(self, sample: HeteroData) -> HeteroData:
+        return self.forward(sample)
 
-        for edge_set in edge_sets:
-            sum_eij = torch.zeros_like(node_features).index_add_(1, edge_set.receivers, edge_set.edge_features)
-            features.append(sum_eij)
-        
-        # if there are no world edge
-        if len(edge_sets) == 1:
-            features.append(torch.zeros_like(node_features))
+    def message_mesh(self, node_features_i, node_features_j, edge_features):
+        features = torch.cat([node_features_i, node_features_j, edge_features], dim=-1)
+        return self.edge_mlp(features)
 
-        return self.node_mlp(torch.concat(features, dim=-1))
+    def update_mesh_edge_features(self, sample):
+        edge_index = sample[MESH].edge_index
+        node_features = sample[NODE].features
+        size = self._check_input(edge_index, None)
 
-    def __call__(self, graph: MultiGraph) -> MultiGraph:
-        new_edge_sets = []
-        for edge_set in graph.edge_sets:
-            new_features = self.__update_edge_features(graph.node_features, edge_set)
-            new_edge_sets.append(edge_set._replace(edge_features=new_features))
+        coll_dict = self._collect(
+            set(self._user_args), edge_index, size,
+            dict(node_features=node_features)
+        )
+        coll_dict["edge_features"] = sample[MESH].features
 
-        new_node_features = self.__update_node_features(graph.node_features, new_edge_sets)
+        msg_kwargs = self.inspector.collect_param_data("message_mesh", coll_dict)
+        return self.message_mesh(**msg_kwargs)
 
-        # residual connections
-        new_node_features += graph.node_features
-        new_edge_sets = [
-            new._replace(edge_features=new.edge_features + old.edge_features) for new, old in zip(new_edge_sets, graph.edge_sets)
-        ]
+    def aggregate_nodes(self, edge_features, edge_index, user_args, size, **kwargs):
+        coll_dict = self._collect(user_args, edge_index, size, kwargs)
+        aggr_kwargs = self.inspector.collect_param_data("aggregate", coll_dict)
+        return self.aggregate(edge_features, **aggr_kwargs)
 
-        return MultiGraph(new_node_features, new_edge_sets)
+    def update(self, aggregated_features_mesh, features):
+        in_features = torch.cat([aggregated_features_mesh, features], dim=-1)
+        return self.node_mlp(in_features)
+
+    def propagate(self, sample):
+        N = sample['node'].features.shape[0]
+        mesh_edge_features_updated = self.update_mesh_edge_features(sample)
+
+        aggr_args = self.inspector.get_flat_param_names(["aggregate"], exclude=list(self.special_args))
+        mesh_edge_index = sample[MESH].edge_index
+        mesh_size = (N, N)
+
+        cloth_features_from_mesh = self.aggregate_nodes(
+            mesh_edge_features_updated, mesh_edge_index, aggr_args, mesh_size
+        )
+
+        cloth_features_new = self.update(cloth_features_from_mesh, sample[NODE].features)
+        sample[NODE].features += cloth_features_new
+
+        sample[MESH].features += mesh_edge_features_updated
+
+        return sample

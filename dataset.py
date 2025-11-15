@@ -1,118 +1,106 @@
-from tfrecord.torch.dataset import TFRecordDataset
-import torch
-
-import numpy as np
-
-import json
 from pathlib import Path
-from typing import Any, override
-from copy import deepcopy
+import numpy as np
+from numpy.lib.npyio import NpzFile
+from tqdm import tqdm
+import sys
 
-from graph import NodeType, Mesh, interpolate_field
-from utils import BATCH
+import torch
+from torch import nn
+from torch_geometric.data import HeteroData, InMemoryDataset
 
-def move_batch_to(batch: Mesh, device: torch.device):
-    return {k: v.to(device) for k, v in batch.items()}
+from utils import *
 
-class Dataset(torch.utils.data.Dataset[Mesh]):
-    parsing_idx: int = 0
+def faces_to_edges(faces: np.ndarray) -> torch.Tensor:
+    faces = np.sort(faces, axis=-1)
 
-    def __init__(self, 
-                 data_path: Path|str,
-                 stage: str,
-                 estimated_size: int|None = None,
-                 noise_scale: float = 1e-3,
-                 noise_gamma: float = 1e-1
+    # Make sure the nodes indices are ordered to correctly identify unique edges
+    edges = np.concatenate([
+        faces[:, [0,1]],
+        faces[:, [1,2]],
+        faces[:, [0,2]],
+    ], axis=0)
+
+    edges = np.unique(edges, axis=0)
+    edges = np.concatenate([edges, edges[:, ::-1]])  # Undirected edges
+    return torch.from_numpy(edges.T).long()    # [2, num_edges]
+
+
+class SimulationDataset(InMemoryDataset):
+    def __init__(
+        self,
+        root: Path | str,
+        noise_scale: float = 1e-3,
+        noise_gamma: float = 1e-1
     ):
-        super().__init__()
+        super().__init__(str(root))
 
-        self.stage = stage
-
-        self.estimated_size = estimated_size
+        # weights_only=False because I generated the data (I trust it)
+        self.data, self.slices = torch.load(self.processed_paths[0], weights_only=False)
 
         self.noise_scale = noise_scale
         self.noise_gamma = noise_gamma
 
-        with open(Path(data_path, "meta.json"), "r") as file:
-            self.meta = json.loads(file.read())
-        
-        self.content = list(iter(TFRecordDataset(
-            data_path = str(Path(data_path, f"{stage}.tfrecord")),
-            index_path = None,
-            transform = self.__parse
-        )))
+    @property
+    def raw_file_names(self):
+        return sorted([f.name for f in Path(self.raw_dir).glob("*.npz")])
 
-    @override
-    def __getitem__(self, idx: int) -> Mesh:
-        def from_idx(idx: int) -> tuple[int, int]:
-            sim = idx // (self.meta["trajectory_length"]-2)
-            time = 1 + idx % (self.meta["trajectory_length"]-2)
-            return sim, time
-        
-
-        sim, time = from_idx(idx)
-
-        prev = {k: v[time-1] for k,v in self.content[sim].items()}
-        mesh = {k: v[time] for k,v in self.content[sim].items()}
-        targ = {k: v[time+1] for k,v in self.content[sim].items()}
-
-        mesh = self.__add_targets(mesh, prev, targ)
-
-        if self.stage == "train":
-            mesh = self.__add_noise(mesh)
-            
-        return mesh
+    @property
+    def processed_file_names(self):
+        return ['data.pt']
     
-    # @override # (No default __len__ method)
-    def __len__(self) -> int:
-        return len(self.content) * (self.meta["trajectory_length"]-2)
+    def __heterodata_from_npz(self, simulation: NpzFile, time_ind: int) -> HeteroData:
+        mesh_pos  = simulation["verts"]
+        world_pos = simulation["nodes"][1:-1]
+        prev_world = simulation["nodes"][:-2]
+        next_world = simulation["nodes"][2:]
 
-    def __parse(self, proto: dict) -> Mesh:
-        self.parsing_idx += 1
-        if self.estimated_size == None:
-            print(f"Parsing: {self.parsing_idx:>4}", end="\r")
-        else:
-            print(f"Parsing: {self.parsing_idx/self.estimated_size*100:5.1f}%", end="\r")
-
-        out = {}
-        for key, info in self.meta["features"].items():
-            data = torch.tensor(np.frombuffer(proto[key], np.dtype(info["dtype"])))
-            data = data.reshape(info["shape"])
-
-            if info["type"] == "static":
-                data = data.tile([self.meta["trajectory_length"], 1, 1])
-            elif info["type"] == "dynamic_varlen":
-                length = torch.tensor(np.frombuffer(proto["length_"+key], np.int32))
-                length = length.flatten()
-                data = list(torch.split(data, length.tolist()))
-            elif info["type"] != "dynamic":
-                raise ValueError("Invalid data format")
-
-            out[key] = data
-
-        return out
-    
-    def __add_targets(self, curr: Mesh, prev: Mesh, targ: Mesh) -> Mesh:
-        out = deepcopy(curr)
-
-        prev_mesh = {k: v.unsqueeze(0) for k,v in prev.items()}
-        curr_mesh = {k: v.unsqueeze(0) for k,v in curr.items()}
-        targ_mesh = {k: v.unsqueeze(0) for k,v in targ.items()}
-
-        # out["prev|world_pos"] = prev_mesh["world_pos"][0]
-        out["prev|world_pos"] = interpolate_field(curr_mesh, prev_mesh, prev_mesh["world_pos"])[0]
-        out["target|world_pos"] = interpolate_field(curr_mesh, targ_mesh, targ_mesh["world_pos"])[0]
+        # Fill the HeteroData object
+        sample = HeteroData()
         
-        return out
+        # ===== Node data
+        sample[NODE].world_pos = torch.from_numpy(world_pos[time_ind]).float()
+        sample[NODE].prev_world_pos = torch.from_numpy(prev_world[time_ind]).float()
+        sample[NODE].next_world_pos = torch.from_numpy(next_world[time_ind]).float()
+        sample[NODE].mesh_pos = torch.from_numpy(mesh_pos).float()
 
-    def __add_noise(self, data: Mesh) -> Mesh:
-        noise = torch.normal(torch.zeros_like(data["world_pos"]), self.noise_scale).type(torch.float32)
+        sample[NODE].type = torch.from_numpy(simulation["node_type"][time_ind]).long()
 
-        mask = (data["node_type"] == NodeType.NORMAL)
-        mask = mask.tile([3])
+        # ===== Mesh edges data
+        mesh_edges = faces_to_edges(simulation["faces"])
+        sample[MESH].edge_index = mesh_edges
+
+        sample[NODE].num_nodes = simulation["nodes"].shape[1]
+
+        return sample
+    
+    def __add_noise(self, sample: HeteroData) -> HeteroData:
+        if self.noise_scale == 0:
+            return sample
+        
+        noise = torch.normal(torch.zeros_like(sample[NODE].world_pos), self.noise_scale).type(sample[NODE].world_pos.dtype)
+
+        mask: torch.Tensor = sample[NODE].type == NodeType.NORMAL
+        mask = torch.stack([mask]*3, dim=-1)
         noise = torch.where(mask, noise, torch.zeros_like(noise))
         
-        out = deepcopy(data)
-        out["world_pos"] += noise
-        out["target|world_pos"] += (1.0 - self.noise_gamma) * noise
-        return out
+        sample[NODE].world_pos += noise
+        sample[NODE].next_world_pos += (1.0 - self.noise_gamma) * noise
+
+        return sample
+    
+    def get(self, idx: int) -> HeteroData:
+        sample = super().get(idx)
+        return self.__add_noise(sample) # type: ignore
+        
+    def process(self):
+        data_list = []
+        for file_path in self.raw_paths:
+            simulation = np.load(file_path)
+
+            n_frames = simulation["nodes"].shape[0]
+            for t in tqdm(range(n_frames-2), file=sys.stdout, desc=f"Processing {Path(file_path).name}"):
+                data = self.__heterodata_from_npz(simulation, t)
+                data_list.append(data)
+
+        data, slices = self.collate(data_list)
+        torch.save((data, slices), self.processed_paths[0])

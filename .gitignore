@@ -1,11 +1,12 @@
 venv/
 img/
 vid/
-dataset/
-checkpoints*/
+datasets/
+checkpoints/
 
 ssh-copy.sh
 
 .DS_Store
 .vscode/
+.idea/
 __pycache__/
