@@ -1,24 +1,22 @@
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
-
 from tqdm import tqdm
 import sys
+import json
 
 import torch
-from torch_geometric.loader import DataLoader
 
 from network.model import Model
-from dataset import SimulationDataset
+from dataset import SimulationLoader
 from utils import *
 
-device = torch.device("mps")
+device = get_device()
 
 checkpoints_dir = Path("checkpoints", "flag")
 dataset_dir = Path("datasets", "flag")
 
-dataset = SimulationDataset(root=dataset_dir)
-loader = DataLoader(dataset, batch_size=1, shuffle=True)
+loader = SimulationLoader(dataset_dir, shuffle=True)
 
 sim_1 = np.load(Path("datasets", "flag", "raw", "flag-1.npz"))
 faces_1 = sim_1["faces"]
@@ -39,12 +37,12 @@ model.load_state_dict(state["model_state_dict"])
 
 fig = plt.figure()
 
-data = dataset.get(400)
+data = dataset.get(0)
 for i in tqdm(range(200), file=sys.stdout):
     fig.clf()
     ax = fig.add_subplot(projection="3d")
     
-    pred = model(data.to(device), {})
+    pred = model(data.to(device))
     data = pred.detach().cpu()
     ax.plot_trisurf(data[NODE].world_pos[:,0], data[NODE].world_pos[:,1], data[NODE].world_pos[:,2], triangles=faces_1)
     ax.set_xlim([-0.5, 3.5])
@@ -59,6 +57,7 @@ for i in tqdm(range(200), file=sys.stdout):
 
 exit(0)
 """
+
 
 
 def lr_lambda(step):
@@ -89,7 +88,7 @@ if len(checkpoints) > 0:
     model.load_state_dict(ckp["model_state_dict"]) 
     optimizer.load_state_dict(ckp["optimizer_state_dict"])
     scheduler.load_state_dict(ckp["scheduler_state_dict"]) 
-    print(f"[INFO] Loaded checkpoint '{checkpoints[-1].name}' (epoch={starting_epoch})")
+    print(f"[INFO] Loaded checkpoint '{checkpoints[-1].name}'")
 
 model.train()
 
@@ -97,9 +96,9 @@ if not from_checkpoint:
     for batch in tqdm(loader, desc="Warmup", file=sys.stdout):
         batch = batch.to(device)
         with torch.no_grad():
-            _ = model.loss(batch, {})
+            _ = model.loss(batch)
 
-epochs = 401
+epochs = 501
 for e in range(starting_epoch+1, epochs):
     loop = tqdm(loader, desc=f"Epoch {e:>3}/{epochs-1}", file=sys.stdout)
     loss_sum = 0
@@ -107,7 +106,7 @@ for e in range(starting_epoch+1, epochs):
         optimizer.zero_grad()
         
         batch.to(device)
-        loss = model.loss(batch, {})
+        loss = model.loss(batch)
         loss.backward()
 
         optimizer.step()

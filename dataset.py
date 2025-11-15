@@ -7,6 +7,7 @@ import sys
 import torch
 from torch import nn
 from torch_geometric.data import HeteroData, InMemoryDataset
+from torch_geometric.loader import DataLoader
 
 from utils import *
 
@@ -104,3 +105,14 @@ class SimulationDataset(InMemoryDataset):
 
         data, slices = self.collate(data_list)
         torch.save((data, slices), self.processed_paths[0])
+
+class SimulationLoader(DataLoader):
+    def __init__(
+        self,
+        root: Path | str,
+        noise_scale: float = 1e-3,
+        noise_gamma: float = 0.1,
+        shuffle: bool = False
+    ):
+        dataset = SimulationDataset(root, noise_scale, noise_gamma)
+        super().__init__(dataset, batch_size=1, shuffle=shuffle)

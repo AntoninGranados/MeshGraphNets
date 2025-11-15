@@ -56,7 +56,7 @@ class Model(nn.Module):
 
         return sample
 
-    def forward_pass(self, sample: HeteroData, meta: dict, is_training: bool) -> HeteroData:
+    def forward_pass(self, sample: HeteroData, is_training: bool) -> HeteroData:
         sample = self.compute_features(sample)
         normalized_sample = self.normalize_graph(sample, is_training)
         latent_sample = self.encoder(normalized_sample)
@@ -67,7 +67,7 @@ class Model(nn.Module):
         output_sample = self.decoder(latent_sample)
         return output_sample
 
-    def integrate_pos(self, sample: HeteroData, prediction: HeteroData, meta: dict[str, Any]) -> HeteroData:
+    def integrate_pos(self, sample: HeteroData, prediction: HeteroData) -> HeteroData:
         """Second order integration"""
         
         acceleration = self.output_normalizer.inverse(prediction[NODE].features)
@@ -84,8 +84,8 @@ class Model(nn.Module):
 
         return sample
 
-    def loss(self, sample: HeteroData, meta: dict[str, Any], is_training: bool = True) -> torch.Tensor:
-        prediction = self.forward_pass(sample, meta, is_training)
+    def loss(self, sample: HeteroData, is_training: bool = True) -> torch.Tensor:
+        prediction = self.forward_pass(sample, is_training)
         predicted_acc = prediction[NODE].features
 
         curr_pos = sample[NODE].world_pos
@@ -101,6 +101,6 @@ class Model(nn.Module):
 
         return loss
 
-    def __call__(self, sample: HeteroData, meta: dict[str, Any]) -> HeteroData:
-        prediction = self.forward_pass(sample, meta, is_training=False)
-        return self.integrate_pos(sample, prediction, meta)
+    def __call__(self, sample: HeteroData) -> HeteroData:
+        prediction = self.forward_pass(sample, is_training=False)
+        return self.integrate_pos(sample, prediction)
