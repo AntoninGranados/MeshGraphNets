@@ -25,6 +25,7 @@ def faces_to_edges(faces: np.ndarray) -> torch.Tensor:
     edges = np.concatenate([edges, edges[:, ::-1]])  # Undirected edges
     return torch.from_numpy(edges.T).long()    # [2, num_edges]
 
+# TODO: save the faces in the `HeteroData`
 def heterodata_from_npz(simulation: NpzFile, time_ind: int) -> HeteroData:
     mesh_pos  = simulation['verts']
     world_pos = simulation['nodes'][1:-1]
