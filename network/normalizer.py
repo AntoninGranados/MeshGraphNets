@@ -8,9 +8,9 @@ class Normalizer(torch.nn.Module):
         self.max_accumulation = max_accumulation
 
         # Values to save with the rest of the parameters
-        self.register_buffer("acc_count", torch.Tensor([0]))
-        self.register_buffer("acc_sum", torch.zeros(size))
-        self.register_buffer("acc_sum_sqr", torch.zeros(size))
+        self.register_buffer('acc_count', torch.Tensor([0]))
+        self.register_buffer('acc_sum', torch.zeros(size))
+        self.register_buffer('acc_sum_sqr', torch.zeros(size))
         
     def accumulate(self, data: torch.Tensor) -> None:
         flat_data = data.reshape([-1, data.shape[-1]])

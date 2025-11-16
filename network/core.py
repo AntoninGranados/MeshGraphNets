@@ -41,12 +41,12 @@ class Encoder(nn.Module):
         self.node_encoder = make_mlp(node_input_size, latent_size, latent_size)
 
         self.edge_encoders = nn.ModuleDict()
-        self.edge_encoders["mesh"] = make_mlp(mesh_edge_input_size, latent_size, latent_size)
+        self.edge_encoders['mesh'] = make_mlp(mesh_edge_input_size, latent_size, latent_size)
 
     def __call__(self, sample: HeteroData) -> HeteroData:
         sample[NODE].features = self.node_encoder(sample[NODE].features)
 
-        sample[MESH].features = self.edge_encoders["mesh"](sample[MESH].features)
+        sample[MESH].features = self.edge_encoders['mesh'](sample[MESH].features)
 
         return sample
 
@@ -71,7 +71,7 @@ class GraphNetBlock(MessagePassing):
         self.inspector.inspect_signature(self.message_mesh)
 
         self._user_args = self.inspector.get_flat_param_names(
-            ["message_mesh", "aggregate", "update"], exclude=list(self.special_args))
+            ['message_mesh', 'aggregate', 'update'], exclude=list(self.special_args))
 
     def forward(self, sample):
         return self.propagate(sample)
@@ -92,14 +92,14 @@ class GraphNetBlock(MessagePassing):
             set(self._user_args), edge_index, size,
             dict(node_features=node_features)
         )
-        coll_dict["edge_features"] = sample[MESH].features
+        coll_dict['edge_features'] = sample[MESH].features
 
-        msg_kwargs = self.inspector.collect_param_data("message_mesh", coll_dict)
+        msg_kwargs = self.inspector.collect_param_data('message_mesh', coll_dict)
         return self.message_mesh(**msg_kwargs)
 
     def aggregate_nodes(self, edge_features, edge_index, user_args, size, **kwargs):
         coll_dict = self._collect(user_args, edge_index, size, kwargs)
-        aggr_kwargs = self.inspector.collect_param_data("aggregate", coll_dict)
+        aggr_kwargs = self.inspector.collect_param_data('aggregate', coll_dict)
         return self.aggregate(edge_features, **aggr_kwargs)
 
     def update(self, aggregated_features_mesh, features):
@@ -110,7 +110,7 @@ class GraphNetBlock(MessagePassing):
         N = sample['node'].features.shape[0]
         mesh_edge_features_updated = self.update_mesh_edge_features(sample)
 
-        aggr_args = self.inspector.get_flat_param_names(["aggregate"], exclude=list(self.special_args))
+        aggr_args = self.inspector.get_flat_param_names(['aggregate'], exclude=list(self.special_args))
         mesh_edge_index = sample[MESH].edge_index
         mesh_size = (N, N)
 

@@ -4,103 +4,111 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import sys
 import json
+import argparse
 
 import torch
 
 from network.model import Model
-from dataset import SimulationLoader
+from dataset import heterodata_from_npz, SimulationLoader
 from utils import *
 
+parser = argparse.ArgumentParser(
+    prog='MeshGraphNet',
+    description='This script train or run a MeshGraphNet model'
+)
+
+parser.add_argument('-r', '--run', type=Path, help='the path to the checkpoint (\"last\"/path) to use when running the model (will run and not train)') # TODO
+parser.add_argument('--hyper', type=Path, help='the path to the hyperparameter file (JSON)', default=Path('hyperparam.json'))
+parser.add_argument('--checkpoints', type=Path, help='the path to the checkpoints directory', default=Path('checkpoints', 'flag'))
+parser.add_argument('--save-format', type=Path, help='the format of the checkpoint files (ex: mgn_[e].pt)', default="mgn_[e].pt")
+parser.add_argument('--dataset', type=Path, help='the path to the dataset directory', default=Path('datasets', 'flag'))
+
+args = parser.parse_args()
+
 device = get_device()
+hyper = json.load(open(args.hyper, 'r'))
 
-checkpoints_dir = Path("checkpoints", "flag")
-dataset_dir = Path("datasets", "flag")
-
-loader = SimulationLoader(dataset_dir, shuffle=True)
-
-sim_1 = np.load(Path("datasets", "flag", "raw", "flag-1.npz"))
-faces_1 = sim_1["faces"]
+loader = SimulationLoader(args.dataset, shuffle=False)
 
 model = Model(
     node_input_size=5,
     mesh_input_size=8,
     output_size=3,
+    graph_net_blocks_count=hyper['network']['graph-net-blocks']
 )
 model.to(device)
 
-"""
-model.eval()
-ckp = sorted(list(checkpoints_dir.glob("*.pt")))[-1]
-print(f"Loading `{ckp}`")
-state = torch.load(ckp)
-model.load_state_dict(state["model_state_dict"])
+if args.run is not None:
+    model.eval()
+    if str(args.run) == 'last':
+        ckp = sorted(list(args.checkpoints.glob('*.pt')))[-1]
+    else:
+        ckp = args.run
 
-fig = plt.figure()
+    print(f'Loading `{ckp}`')
+    state = torch.load(ckp)
+    model.load_state_dict(state['model_state_dict'])
 
-data = dataset.get(0)
-for i in tqdm(range(200), file=sys.stdout):
-    fig.clf()
-    ax = fig.add_subplot(projection="3d")
-    
-    pred = model(data.to(device))
-    data = pred.detach().cpu()
-    ax.plot_trisurf(data[NODE].world_pos[:,0], data[NODE].world_pos[:,1], data[NODE].world_pos[:,2], triangles=faces_1)
-    ax.set_xlim([-0.5, 3.5])
-    ax.set_ylim([-0.5, 2.5])
-    ax.set_zlim([-2, 2])
-    ax.set_axis_off()
-    ax.set_aspect("equal")
+    fig = plt.figure()
 
-    plt.tight_layout()
-    plt.draw()
-    plt.pause(0.01)
+    simulation = np.load(Path('datasets', 'flag', 'raw', 'flag-1.npz'))
+    faces = simulation['faces']
+    data = heterodata_from_npz(simulation, 0)
 
-exit(0)
-"""
+    for i in tqdm(range(200), file=sys.stdout):
+        fig.clf()
+        ax = fig.add_subplot(projection='3d')
+        
+        pred = model(data.to(device))   # type: ignore (device should be int|str ?)
+        data = pred.detach().cpu()
+        ax.plot_trisurf(data[NODE].world_pos[:,0], data[NODE].world_pos[:,1], data[NODE].world_pos[:,2], triangles=faces)
+        ax.set_xlim([-0.5, 3.5])
+        ax.set_ylim([-0.5, 2.5])
+        ax.set_zlim([-2, 2])
+        ax.set_axis_off()
+        ax.set_aspect('equal')
 
+        plt.tight_layout()
+        plt.draw()
+        plt.pause(0.01)
 
+    exit(0)
 
-def lr_lambda(step):
-    decay = 0.1 ** (step / 5_000_000)
-    min_lr = 1e-6/1e-4
-    return max(decay, min_lr)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 scheduler = torch.optim.lr_scheduler.LambdaLR(
-    optimizer, lr_lambda = lambda s: lr_lambda(s)
+    optimizer, lr_lambda = lambda s: lr_lambda(s, hyper)
 )
 
-from_checkpoint = False
-checkpoints = sorted(list(checkpoints_dir.glob("*.pt")))
+checkpoints = sorted(list(args.checkpoints.glob('*.pt')))
 starting_epoch = 0
 if len(checkpoints) > 0:
-    print(f"[WARN] checkpoints already exist, do you want to continue ? If yes, the latest checkpoint will be loaded [y/N] ", end="")
+    print(f"[WARN] checkpoints already exist, do you want to continue ? If yes, the latest checkpoint will be loaded [y/N] ", end='')
     res = input()
-    if res.lower() != "y":
-        raise FileExistsError(f"There are already checkpoints saved in `{checkpoints_dir}`")
+    if res.lower() != 'y':
+        raise FileExistsError(f'There are already checkpoints saved in `{args.checkpoints}`')
     
-    from_checkpoint = True
-
     ckp = torch.load(checkpoints[-1], map_location=device)
 
-    starting_epoch = int(ckp.get("epoch", 0))
+    starting_epoch = int(ckp.get('epoch', 0))
 
-    model.load_state_dict(ckp["model_state_dict"]) 
-    optimizer.load_state_dict(ckp["optimizer_state_dict"])
-    scheduler.load_state_dict(ckp["scheduler_state_dict"]) 
+    model.load_state_dict(ckp['model_state_dict']) 
+    optimizer.load_state_dict(ckp['optimizer_state_dict'])
+    # FIXME: might be better (and lighter when saving) to simply create the scheduler using the `last_epoch` field
+    scheduler.load_state_dict(ckp['scheduler_state_dict'])
     print(f"[INFO] Loaded checkpoint '{checkpoints[-1].name}'")
 
 model.train()
 
-if not from_checkpoint:
-    for batch in tqdm(loader, desc="Warmup", file=sys.stdout):
+if starting_epoch == 0:
+    for batch in tqdm(loader, desc='Warmup', file=sys.stdout):
         batch = batch.to(device)
         with torch.no_grad():
             _ = model.loss(batch)
 
-epochs = 501
+epochs = int(hyper['training']['steps'] / len(loader))
 for e in range(starting_epoch+1, epochs):
-    loop = tqdm(loader, desc=f"Epoch {e:>3}/{epochs-1}", file=sys.stdout)
+    loop = tqdm(loader, desc=f'Epoch {e:>3}/{epochs-1}', file=sys.stdout)
     loss_sum = 0
     for it, batch in enumerate(loop):
         optimizer.zero_grad()
@@ -113,12 +121,10 @@ for e in range(starting_epoch+1, epochs):
         scheduler.step()
 
         loss_sum += loss.item()
-        loop.set_postfix({"Loss": f"{loss_sum/(it+1): .3f}"})
+        loop.set_postfix({'Loss': f'{loss_sum/(it+1): .3f}'})
 
     if e % 10 == 0:
-        torch.save({
-            "epoch": e,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "scheduler_state_dict": scheduler.state_dict(),
-        }, Path(checkpoints_dir, f"mgn_{e:03}.pt"))
+        save_epoch(Path(args.checkpoints, args.save_format), e, model, optimizer, scheduler)
+
+# Always save last epoch
+save_epoch(Path(args.checkpoints, args.save_format), epochs, model, optimizer, scheduler)

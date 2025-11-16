@@ -1,9 +1,6 @@
 import torch
 from torch import nn
-
 from torch_geometric.data import HeteroData
-
-from typing import Any
 
 from network.normalizer import Normalizer
 from network.core import Encoder, GraphNetBlock, Decoder
@@ -20,7 +17,7 @@ class Model(nn.Module):
 
         self.node_normalizer = Normalizer(size=node_input_size)
         self.edge_normalizer = torch.nn.ModuleDict()
-        self.edge_normalizer["mesh"] = Normalizer(size=mesh_input_size)
+        self.edge_normalizer['mesh'] = Normalizer(size=mesh_input_size)
         self.output_normalizer = Normalizer(size=3)
 
         self.encoder = Encoder(node_input_size, mesh_input_size)
@@ -31,7 +28,7 @@ class Model(nn.Module):
 
     def normalize_graph(self, sample: HeteroData, is_training: bool) -> HeteroData:
         sample[NODE].features = self.node_normalizer(sample[NODE].features, is_training)
-        sample[MESH].features = self.edge_normalizer["mesh"](sample[MESH].features, is_training)
+        sample[MESH].features = self.edge_normalizer['mesh'](sample[MESH].features, is_training)
 
         return sample
     
@@ -68,7 +65,7 @@ class Model(nn.Module):
         return output_sample
 
     def integrate_pos(self, sample: HeteroData, prediction: HeteroData) -> HeteroData:
-        """Second order integration"""
+        '''Second order integration'''
         
         acceleration = self.output_normalizer.inverse(prediction[NODE].features)
 

@@ -25,6 +25,30 @@ def faces_to_edges(faces: np.ndarray) -> torch.Tensor:
     edges = np.concatenate([edges, edges[:, ::-1]])  # Undirected edges
     return torch.from_numpy(edges.T).long()    # [2, num_edges]
 
+def heterodata_from_npz(simulation: NpzFile, time_ind: int) -> HeteroData:
+    mesh_pos  = simulation['verts']
+    world_pos = simulation['nodes'][1:-1]
+    prev_world = simulation['nodes'][:-2]
+    next_world = simulation['nodes'][2:]
+
+    sample = HeteroData()
+    
+    # ===== Node data
+    sample[NODE].world_pos = torch.from_numpy(world_pos[time_ind]).float()
+    sample[NODE].prev_world_pos = torch.from_numpy(prev_world[time_ind]).float()
+    sample[NODE].next_world_pos = torch.from_numpy(next_world[time_ind]).float()
+    sample[NODE].mesh_pos = torch.from_numpy(mesh_pos).float()
+
+    sample[NODE].type = torch.from_numpy(simulation['node_type'][time_ind]).long()
+
+    # ===== Mesh edges data
+    mesh_edges = faces_to_edges(simulation['faces'])
+    sample[MESH].edge_index = mesh_edges
+
+    sample[NODE].num_nodes = simulation['nodes'].shape[1]
+
+    return sample
+
 
 class SimulationDataset(InMemoryDataset):
     def __init__(
@@ -43,36 +67,11 @@ class SimulationDataset(InMemoryDataset):
 
     @property
     def raw_file_names(self):
-        return sorted([f.name for f in Path(self.raw_dir).glob("*.npz")])
+        return sorted([f.name for f in Path(self.raw_dir).glob('*.npz')])
 
     @property
     def processed_file_names(self):
         return ['data.pt']
-    
-    def __heterodata_from_npz(self, simulation: NpzFile, time_ind: int) -> HeteroData:
-        mesh_pos  = simulation["verts"]
-        world_pos = simulation["nodes"][1:-1]
-        prev_world = simulation["nodes"][:-2]
-        next_world = simulation["nodes"][2:]
-
-        # Fill the HeteroData object
-        sample = HeteroData()
-        
-        # ===== Node data
-        sample[NODE].world_pos = torch.from_numpy(world_pos[time_ind]).float()
-        sample[NODE].prev_world_pos = torch.from_numpy(prev_world[time_ind]).float()
-        sample[NODE].next_world_pos = torch.from_numpy(next_world[time_ind]).float()
-        sample[NODE].mesh_pos = torch.from_numpy(mesh_pos).float()
-
-        sample[NODE].type = torch.from_numpy(simulation["node_type"][time_ind]).long()
-
-        # ===== Mesh edges data
-        mesh_edges = faces_to_edges(simulation["faces"])
-        sample[MESH].edge_index = mesh_edges
-
-        sample[NODE].num_nodes = simulation["nodes"].shape[1]
-
-        return sample
     
     def __add_noise(self, sample: HeteroData) -> HeteroData:
         if self.noise_scale == 0:
@@ -98,9 +97,9 @@ class SimulationDataset(InMemoryDataset):
         for file_path in self.raw_paths:
             simulation = np.load(file_path)
 
-            n_frames = simulation["nodes"].shape[0]
-            for t in tqdm(range(n_frames-2), file=sys.stdout, desc=f"Processing {Path(file_path).name}"):
-                data = self.__heterodata_from_npz(simulation, t)
+            n_frames = simulation['nodes'].shape[0]
+            for t in tqdm(range(n_frames-2), file=sys.stdout, desc=f'Processing {Path(file_path).name}'):
+                data = heterodata_from_npz(simulation, t)
                 data_list.append(data)
 
         data, slices = self.collate(data_list)
