@@ -9,7 +9,7 @@ import argparse
 import torch
 
 from network.model import Model
-from dataset import heterodata_from_npz, SimulationLoader
+from dataset import SimulationLoader
 from utils import *
 
 parser = argparse.ArgumentParser(
@@ -17,16 +17,16 @@ parser = argparse.ArgumentParser(
     description='This script train or run a MeshGraphNet model'
 )
 parser.add_argument('-r', '--rollout', type=Path, help='the path for the checkpoint (\"last\"/path) to use when doing a rollout')
-parser.add_argument('-rs', '--roll-data', type=int, help='the dataset index for the rollout (only used with --run)', default=0)
+parser.add_argument('-rd', '--roll-data', type=int, help='the dataset index for the rollout (only used with --run)', default=0)
 parser.add_argument('-rl', '--roll-length', type=int, help='the number of epochs of the rollout (only used with --run)', default=100)
-parser.add_argument('--hyper', type=Path, help='the path to the hyperparameter file (JSON)', default=Path('hyperparam.json'))
-parser.add_argument('--checkpoints', type=Path, help='the path to the checkpoints directory', default=Path('checkpoints', 'flag'))
+parser.add_argument('-ckp', '--checkpoints', type=Path, help='the path to the checkpoints directory', required=True)
+parser.add_argument('-ds', '--dataset', type=Path, help='the path to the dataset directory', required=True)
 parser.add_argument('--save-format', type=Path, help='the format of the checkpoint files (ex: mgn_[e].pt)', default="mgn_[e].pt")
-parser.add_argument('--dataset', type=Path, help='the path to the dataset directory', default=Path('datasets', 'flag'))
+parser.add_argument('-hp', '--hyperparam', type=Path, help='the path to the hyperparameter file (JSON)', default=Path('hyperparam.json'))
 args = parser.parse_args()
 
 device = get_device()
-hyper = json.load(open(args.hyper, 'r'))
+hyper = json.load(open(args.hyperparam, 'r'))
 
 model = Model(
     node_input_size=5,
@@ -51,10 +51,7 @@ if args.rollout is not None:
     fig = plt.figure()
 
     loader = SimulationLoader(args.dataset, noise_scale=0.0, shuffle=False)
-    simulation = np.load(Path('datasets', 'flag', 'raw', 'flag-1.npz'))
-    faces = simulation['faces'] # FIXME: should use the faces from the data (not implemented for now, see `dataset.py`)
-    # data = heterodata_from_npz(simulation, 0)
-    data = list(iter(loader))[args.roll_data]
+    data = loader.dataset[args.roll_data]
 
     for i in tqdm(range(args.roll_length), file=sys.stdout):
         fig.clf()
@@ -62,7 +59,7 @@ if args.rollout is not None:
         
         pred = model(data.to(device))   # type: ignore (device should be int|str ?)
         data = pred.detach().cpu()
-        ax.plot_trisurf(data[NODE].world_pos[:,0], data[NODE].world_pos[:,1], data[NODE].world_pos[:,2], triangles=faces)
+        ax.plot_trisurf(data[NODE].world_pos[:,0], data[NODE].world_pos[:,1], data[NODE].world_pos[:,2], triangles=data.face_index)
         ax.set_xlim([-0.5, 3.5])
         ax.set_ylim([-0.5, 2.5])
         ax.set_zlim([-2, 2])

@@ -25,7 +25,7 @@ def save_epoch(
     scheduler: torch.optim.lr_scheduler.LRScheduler
 ):
     parsed_path = str(path).replace('[e]', f'{epoch:03}')
-    print(parsed_path)
+    print(f"Saving checkpoint to `{parsed_path}`")
     torch.save({
         'epoch': epoch,
         'model_state_dict': model.state_dict(),

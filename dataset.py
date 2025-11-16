@@ -34,7 +34,7 @@ def heterodata_from_npz(simulation: NpzFile, time_ind: int) -> HeteroData:
 
     sample = HeteroData()
     
-    # ===== Node data
+    # ===== Nodes data
     sample[NODE].world_pos = torch.from_numpy(world_pos[time_ind]).float()
     sample[NODE].prev_world_pos = torch.from_numpy(prev_world[time_ind]).float()
     sample[NODE].next_world_pos = torch.from_numpy(next_world[time_ind]).float()
@@ -47,6 +47,9 @@ def heterodata_from_npz(simulation: NpzFile, time_ind: int) -> HeteroData:
     sample[MESH].edge_index = mesh_edges
 
     sample[NODE].num_nodes = simulation['nodes'].shape[1]
+
+    # ===== Faces data
+    sample.face_index = torch.from_numpy(simulation['faces']).long()
 
     return sample
 
