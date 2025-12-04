@@ -11,7 +11,9 @@ class Model(nn.Module):
         node_input_size: int,
         mesh_input_size: int,
         output_size: int,
-        graph_net_blocks_count: int = 15
+        graph_net_blocks_count: int = 15,
+        lame_lambda: float = 1.0,   # Should come from the dataset or be an hyperparameter
+        lame_mu: float = 1.0,       # Should come from the dataset or be an hyperparameter
     ) -> None:
         super().__init__()
 
@@ -25,6 +27,8 @@ class Model(nn.Module):
         self.decoder = Decoder(output_size=output_size)
 
         self.loss_fn = torch.nn.MSELoss()
+        self.lame_lambda = lame_lambda
+        self.lame_mu = lame_mu
 
     def normalize_graph(self, sample: HeteroData, is_training: bool) -> HeteroData:
         sample[NODE].features = self.node_normalizer(sample[NODE].features, is_training)
@@ -109,28 +113,58 @@ class Model(nn.Module):
         curr_pos = sample[NODE].world_pos
         prev_pos = sample[NODE].prev_world_pos
         prev_vel = (prev_pos - curr_pos) / dt
+        normal_mask = (sample[NODE].type == NodeType.NORMAL).squeeze(-1)
+        if normal_mask.sum() == 0:
+            raise RuntimeError("No normal nodes available for unsupervised loss computation")
 
         prediction = self.forward_pass(sample, is_training)
-        pred_acc = prediction[NODE].features
-        pred_vel = prev_vel + pred_acc * dt
-        pred_pos = prev_pos + pred_vel * dt
+        pred_acc: torch.Tensor = self.output_normalizer.inverse(prediction[NODE].features)
 
-        # INERTIA
+        pred_vel = prev_vel.clone()
+        pred_vel[normal_mask] = prev_vel[normal_mask] + pred_acc[normal_mask] * dt
+
+        pred_pos = prev_pos.clone()
+        pred_pos[normal_mask] = prev_pos[normal_mask] + pred_vel[normal_mask] * dt
+
+        for name, tensor in {
+            "pred_acc": pred_acc,
+            "pred_vel": pred_vel,
+            "pred_pos": pred_pos,
+        }.items():
+            if not torch.isfinite(tensor).all():
+                raise RuntimeError(f"Non-finite values detected in {name}")
+        
+        # Intertia
         L_inertia = 0.5 * m * torch.norm(pred_vel - prev_vel, dim=-1)
-        L_inertia = torch.mean(L_inertia)
+        L_inertia = torch.mean(L_inertia[normal_mask])
 
-        # GRAVITY
-        g = torch.Tensor([[0, 0, -9.81]])
-        L_gravity = - 0.5 * m * (pred_pos @ g)
-        L_gravity = torch.mean(L_gravity)
+        # Gravity
+        g = torch.tensor([[0], [0], [-9.81]], dtype=pred_pos.dtype).to(pred_pos.device)
+        L_gravity = - 0.5 * m * (pred_pos @ g).squeeze(-1)
+        L_gravity = torch.mean(L_gravity[normal_mask])
 
-        # BENDING
+        # Bending
         theta_pred = compute_dihedral_angle(sample, pred_pos)
         theta_0 = sample[MESH].theta_0
         L_bending = torch.mean((theta_pred - theta_0) ** 2)
 
-        L_static = L_gravity + L_bending
+        # Stretching
+        G = compute_green_strain(sample, pred_pos)
+        energy_density = \
+                self.lame_lambda * 0.5 * torch.square(btrace(G)) +\
+                self.lame_mu * btrace(torch.bmm(G, G))
 
+        face_vertices = pred_pos[sample.face_index]
+        cross_prod = torch.cross(face_vertices[:, 1] - face_vertices[:, 0], face_vertices[:, 2] - face_vertices[:, 0], dim=1)
+        area = 0.5 * torch.linalg.norm(cross_prod, dim=1).clamp_min(1e-12)
+
+        L_stretch = torch.sum(area * energy_density) / area.sum()
+
+        # Collision
+        # TODO
+
+        # Static
+        L_static = L_gravity + L_bending + L_stretch
         return L_inertia + L_static
 
     def __call__(self, sample: HeteroData) -> HeteroData:

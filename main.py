@@ -16,7 +16,7 @@ parser = argparse.ArgumentParser(
     prog='MeshGraphNet',
     description='This script train or run a MeshGraphNet model'
 )
-parser.add_argument('-r', '--rollout', type=Path, help='the path for the checkpoint (\"last\"/path) to use when doing a rollout')
+parser.add_argument('-roll', '--rollout', type=Path, help='the path for the checkpoint (\"last\"/<path>) to use when doing a rollout')
 parser.add_argument('-rd', '--roll-data', type=int, help='the dataset index for the rollout (only used with --run)', default=0)
 parser.add_argument('-rl', '--roll-length', type=int, help='the number of epochs of the rollout (only used with --run)', default=100)
 parser.add_argument('-ckp', '--checkpoints', type=Path, help='the path to the checkpoints directory', required=True)
@@ -27,12 +27,15 @@ args = parser.parse_args()
 
 device = get_device()
 hyper = json.load(open(args.hyperparam, 'r'))
+physics = hyper.get('physics', {})
 
 model = Model(
     node_input_size=5,
     mesh_input_size=8,
     output_size=3,
-    graph_net_blocks_count=hyper['network']['graph-net-blocks']
+    graph_net_blocks_count=hyper['network']['graph-net-blocks'],
+    lame_lambda=physics.get('lambda', 1.0),
+    lame_mu=physics.get('mu', 1.0),
 )
 model.to(device)
 
@@ -53,31 +56,19 @@ if args.rollout is not None:
     loader = SimulationLoader(args.dataset, noise_scale=0.0, shuffle=False)
     data = loader.dataset[args.roll_data]
 
-    # handles = tuple(torch.nonzero(data[NODE].type == NodeType.HANDLES))
-    # ax = plt.figure().add_subplot(projection="3d")
-    # ax.scatter(data[NODE].world_pos[handles,0], data[NODE].world_pos[handles,1], data[NODE].world_pos[handles,2], alpha=1, s=50, c="#EFBE46")
-    # ax.plot_trisurf(data[NODE].world_pos[:,0], data[NODE].world_pos[:,1], data[NODE].world_pos[:,2], triangles=data.face_index, color="#9EA9B9", edgecolors="#2D3136", linewidth=0.2)
-    # ax.set_zlim([-0.2, 0.2])
-    # ax.set_axis_off()
-    # ax.set_aspect('equal')
-    # plt.tight_layout()
-    # # plt.show()
-    # plt.savefig("temp.png", dpi=500)
-    # 
-    # exit(0)
-
     for i in tqdm(range(args.roll_length), file=sys.stdout):
         fig.clf()
         ax = fig.add_subplot(projection='3d')
-        
+
         pred = model(data.to(device))   # type: ignore (device should be int|str ?)
         data = pred.detach().cpu()
+
         ax.plot_trisurf(data[NODE].world_pos[:,0], data[NODE].world_pos[:,1], data[NODE].world_pos[:,2], triangles=data.face_index)
-        ax.set_xlim([-0.5, 3.5])
-        ax.set_ylim([-0.5, 2.5])
-        ax.set_zlim([-2, 2])
-        ax.set_axis_off()
+        # ax.set_xlim([-0.5, 3.5])
+        # ax.set_ylim([-0.5, 2.5])
+        # ax.set_zlim([-2, 2])
         ax.set_aspect('equal')
+        ax.set_axis_off()
 
         plt.tight_layout()
         plt.draw()
@@ -97,7 +88,7 @@ else:
     starting_epoch = 0
     checkpoints = sorted(list(args.checkpoints.glob('*.pt')))
     if len(checkpoints) > 0:
-        print(f"[WARN] checkpoints already exist, do you want to continue ? If yes, the latest checkpoint will be loaded [y/N] ", end='')
+        print(f"[WARN] checkpoints already exist, do you want to continue ? If yes, the last checkpoint will be loaded [y/N] ", end='')
         res = input()
         if res.lower() != 'y':
             raise FileExistsError(f'There are already checkpoints saved in `{args.checkpoints}`')
@@ -126,7 +117,8 @@ else:
             optimizer.zero_grad()
             
             batch.to(device)
-            loss = model.supervised_loss(batch)
+            # loss = model.supervised_loss(batch)   #! should be an argument when running the script
+            loss = model.unsupervised_loss(batch)
             loss.backward()
 
             optimizer.step()
