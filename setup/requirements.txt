@@ -9,4 +9,4 @@ torch
 --find-links https://data.pyg.org/whl/torch-2.8.0+cu128.html
 torch-cluster
 torch-geometric
-tfrecord[torch]
+# tfrecord[torch]

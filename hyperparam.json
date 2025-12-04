@@ -4,9 +4,9 @@
     },
 
     "training": {
-        "steps": 1000000,
+        "steps": 500000,
 
-        "decay-steps": 0.6,
+        "decay-steps": 0.5,
         "decay-rate": 0.1,
         "start-lr": 1e-4,
         "min-lr": 1e-6

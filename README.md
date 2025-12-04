@@ -4,7 +4,4 @@
 
 The implementation is focused on *Lagragian systems* (deformable objects such as cloth).
 
-Do *NOT* use this repository as a reference. It is not implemented in an efficient way, and the remeshing algorithm does not work correctly.
-
-### Rollout on the *Flag Simple* dataset
-![](demo/flag_simple.gif)
+Do *NOT* use this repository as a reference.

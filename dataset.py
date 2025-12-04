@@ -25,9 +25,9 @@ def faces_to_edges(faces: np.ndarray) -> torch.Tensor:
     edges = np.concatenate([edges, edges[:, ::-1]])  # Undirected edges
     return torch.from_numpy(edges.T).long()    # [2, num_edges]
 
-# TODO: save the faces in the `HeteroData`
 def heterodata_from_npz(simulation: NpzFile, time_ind: int) -> HeteroData:
     mesh_pos  = simulation['verts']
+    faces = simulation['faces']
     world_pos = simulation['nodes'][1:-1]
     prev_world = simulation['nodes'][:-2]
     next_world = simulation['nodes'][2:]
@@ -41,15 +41,18 @@ def heterodata_from_npz(simulation: NpzFile, time_ind: int) -> HeteroData:
     sample[NODE].mesh_pos = torch.from_numpy(mesh_pos).float()
 
     sample[NODE].type = torch.from_numpy(simulation['node_type'][time_ind]).long()
-
-    # ===== Mesh edges data
-    mesh_edges = faces_to_edges(simulation['faces'])
-    sample[MESH].edge_index = mesh_edges
-
+    
     sample[NODE].num_nodes = simulation['nodes'].shape[1]
 
+    # ===== Mesh edges data
+    directed_edges = faces_to_bidirectional_edges(faces)
+    sample[MESH].edge_index = torch.from_numpy(directed_edges.T).long()
+
     # ===== Faces data
-    sample.face_index = torch.from_numpy(simulation['faces']).long()
+    sample.face_index = torch.from_numpy(faces).long()
+
+    # ===== Per-edge dihedral angles
+    sample[MESH].theta_0 = compute_dihedral_angle(sample)
 
     return sample
 

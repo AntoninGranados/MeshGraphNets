@@ -73,15 +73,15 @@ class Model(nn.Module):
         prev_pos = sample[NODE].prev_world_pos
         pred_pos = 2*curr_pos + acceleration - prev_pos
 
-        loss_mask = sample[NODE].type == NodeType.NORMAL
-        loss_mask = loss_mask.squeeze(-1)
+        mask = sample[NODE].type == NodeType.NORMAL
+        mask = mask.squeeze(-1)
 
-        sample[NODE].prev_world_pos[loss_mask] = sample[NODE].world_pos[loss_mask]
-        sample[NODE].world_pos[loss_mask] = pred_pos[loss_mask]
+        sample[NODE].prev_world_pos[mask] = sample[NODE].world_pos[mask]
+        sample[NODE].world_pos[mask] = pred_pos[mask]
 
         return sample
 
-    def loss(self, sample: HeteroData, is_training: bool = True) -> torch.Tensor:
+    def supervised_loss(self, sample: HeteroData, is_training: bool = True) -> torch.Tensor:
         prediction = self.forward_pass(sample, is_training)
         predicted_acc = prediction[NODE].features
 
@@ -97,6 +97,41 @@ class Model(nn.Module):
         loss = self.loss_fn(predicted_acc[loss_mask], target_acc_norm[loss_mask])
 
         return loss
+    
+    def unsupervised_loss(self, sample: HeteroData, is_training: bool = True) -> torch.Tensor:
+        """
+        From "SNUG: Self-Supervised Neural Dynamic Garments"
+        """
+
+        dt = 1  # Time step
+        m = 1   # Mass
+
+        curr_pos = sample[NODE].world_pos
+        prev_pos = sample[NODE].prev_world_pos
+        prev_vel = (prev_pos - curr_pos) / dt
+
+        prediction = self.forward_pass(sample, is_training)
+        pred_acc = prediction[NODE].features
+        pred_vel = prev_vel + pred_acc * dt
+        pred_pos = prev_pos + pred_vel * dt
+
+        # INERTIA
+        L_inertia = 0.5 * m * torch.norm(pred_vel - prev_vel, dim=-1)
+        L_inertia = torch.mean(L_inertia)
+
+        # GRAVITY
+        g = torch.Tensor([[0, 0, -9.81]])
+        L_gravity = - 0.5 * m * (pred_pos @ g)
+        L_gravity = torch.mean(L_gravity)
+
+        # BENDING
+        theta_pred = compute_dihedral_angle(sample, pred_pos)
+        theta_0 = sample[MESH].theta_0
+        L_bending = torch.mean((theta_pred - theta_0) ** 2)
+
+        L_static = L_gravity + L_bending
+
+        return L_inertia + L_static
 
     def __call__(self, sample: HeteroData) -> HeteroData:
         prediction = self.forward_pass(sample, is_training=False)

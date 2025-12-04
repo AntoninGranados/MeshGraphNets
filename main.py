@@ -53,6 +53,19 @@ if args.rollout is not None:
     loader = SimulationLoader(args.dataset, noise_scale=0.0, shuffle=False)
     data = loader.dataset[args.roll_data]
 
+    # handles = tuple(torch.nonzero(data[NODE].type == NodeType.HANDLES))
+    # ax = plt.figure().add_subplot(projection="3d")
+    # ax.scatter(data[NODE].world_pos[handles,0], data[NODE].world_pos[handles,1], data[NODE].world_pos[handles,2], alpha=1, s=50, c="#EFBE46")
+    # ax.plot_trisurf(data[NODE].world_pos[:,0], data[NODE].world_pos[:,1], data[NODE].world_pos[:,2], triangles=data.face_index, color="#9EA9B9", edgecolors="#2D3136", linewidth=0.2)
+    # ax.set_zlim([-0.2, 0.2])
+    # ax.set_axis_off()
+    # ax.set_aspect('equal')
+    # plt.tight_layout()
+    # # plt.show()
+    # plt.savefig("temp.png", dpi=500)
+    # 
+    # exit(0)
+
     for i in tqdm(range(args.roll_length), file=sys.stdout):
         fig.clf()
         ax = fig.add_subplot(projection='3d')
@@ -103,7 +116,7 @@ else:
         for batch in tqdm(loader, desc='Warmup', file=sys.stdout):
             batch = batch.to(device)
             with torch.no_grad():
-                _ = model.loss(batch)
+                _ = model.supervised_loss(batch)
 
     epochs = int(hyper['training']['steps'] / len(loader))
     for e in range(starting_epoch+1, epochs):
@@ -113,7 +126,7 @@ else:
             optimizer.zero_grad()
             
             batch.to(device)
-            loss = model.loss(batch)
+            loss = model.supervised_loss(batch)
             loss.backward()
 
             optimizer.step()
