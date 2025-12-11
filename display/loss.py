@@ -5,6 +5,74 @@ import json
 from pathlib import Path
 from scipy.optimize import curve_fit
 
+
+"""
+file = open(Path(".", "checkpoints", "flag-gravity-overfit-unsup", "loss_log.txt"), "r")
+lines = file.readlines()
+file.close()
+
+loss_terms = []
+for l in lines[1:]:
+    loss_terms.append(list(map(float, l.strip().split(", "))))
+loss_terms = np.array(loss_terms)
+
+plt.style.use('dark_background')
+fig = plt.figure(constrained_layout=True)
+gs = fig.add_gridspec(2, 4, height_ratios=[2, 1])
+
+ax_main = fig.add_subplot(gs[0, :])
+labels = ["Total Loss", "L_inertia", "L_gravity", "L_bending", "L_stretch"]
+for idx, label in enumerate(labels):
+    ax_main.plot(loss_terms[:, idx], label=label)
+ax_main.legend()
+
+for i, (idx, label) in enumerate(zip(range(1, 5), labels[1:])):
+    ax = fig.add_subplot(gs[1, i])
+    ax.plot(loss_terms[:, idx], label=label)
+    # ax.semilogy()
+    ax.set_title(label, fontsize=8)
+    ax.tick_params(axis="both", which="both", labelsize=7)
+
+plt.show()
+"""
+
+plt.style.use('dark_background')
+fig = plt.figure(constrained_layout=True)
+plt.rcParams["font.family"] = "monospace"
+fignum = fig.number
+
+while plt.fignum_exists(fignum):
+    file = open(Path(".", "checkpoints", "flag-gravity-unsupervised", "loss_log.txt"), "r")
+    lines = file.readlines()
+    file.close()
+
+    loss_terms = []
+    for l in lines[1:]:
+        loss_terms.append(list(map(float, l.strip().split(", "))))
+    loss_terms = np.array(loss_terms)
+
+    plt.clf()
+    gs = fig.add_gridspec(2, 4, height_ratios=[2, 1])
+
+    ax_main = fig.add_subplot(gs[0, :])
+    labels = ["Total Loss", "L_inertia", "L_gravity", "L_bending", "L_stretch"]
+    for idx, label in enumerate(labels):
+        ax_main.plot(loss_terms[:, idx], label=label)
+    # ax_main.semilogy()
+    ax_main.legend()
+
+    for i, (idx, label) in enumerate(zip(range(1, 5), labels[1:])):
+        ax = fig.add_subplot(gs[1, i])
+        ax.plot(loss_terms[:, idx], label=label)
+        # ax.semilogy()
+        ax.set_title(label, fontsize=8)
+        ax.tick_params(axis="both", which="both", labelsize=7)
+
+    plt.draw()
+    plt.pause(30)
+
+
+"""
 if __name__ == "__main__":
     with open(Path(".", "hyperparam.json"), "r") as file:
         hyper = json.loads(file.read())
@@ -74,3 +142,4 @@ if __name__ == "__main__":
         plt.pause(0.1)
 
         if not plt.fignum_exists(fignum): break
+"""

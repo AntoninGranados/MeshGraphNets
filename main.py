@@ -11,6 +11,8 @@ import torch
 from network.model import Model
 from dataset import SimulationLoader
 from utils import *
+from loss.self_supervised_loss import SelfSupervisedLoss
+from rollout import rollout
 
 parser = argparse.ArgumentParser(
     prog='MeshGraphNet',
@@ -27,63 +29,32 @@ args = parser.parse_args()
 
 device = get_device()
 hyper = json.load(open(args.hyperparam, 'r'))
-physics = hyper.get('physics', {})
 
 model = Model(
     node_input_size=5,
     mesh_input_size=8,
     output_size=3,
     graph_net_blocks_count=hyper['network']['graph-net-blocks'],
-    lame_lambda=physics.get('lambda', 1.0),
-    lame_mu=physics.get('mu', 1.0),
 )
 model.to(device)
 
-# Rollout using the `args.rollout` checkpoint)
 if args.rollout is not None:
-    model.eval()
-    if str(args.rollout) == 'last':
-        ckp = sorted(list(args.checkpoints.glob('*.pt')))[-1]
-    else:
-        ckp = args.rollout
+    rollout(args, model, device)
 
-    state = torch.load(ckp)
-    model.load_state_dict(state['model_state_dict'])
-    print(f'[INFO] Rollout on `{ckp}` for {args.roll_length} time steps')
-
-    fig = plt.figure()
-
-    loader = SimulationLoader(args.dataset, noise_scale=0.0, shuffle=False)
-    data = loader.dataset[args.roll_data]
-
-    for i in tqdm(range(args.roll_length), file=sys.stdout):
-        fig.clf()
-        ax = fig.add_subplot(projection='3d')
-
-        pred = model(data.to(device))   # type: ignore (device should be int|str ?)
-        data = pred.detach().cpu()
-
-        ax.plot_trisurf(data[NODE].world_pos[:,0], data[NODE].world_pos[:,1], data[NODE].world_pos[:,2], triangles=data.face_index)
-        # ax.set_xlim([-0.5, 3.5])
-        # ax.set_ylim([-0.5, 2.5])
-        # ax.set_zlim([-2, 2])
-        ax.set_aspect('equal')
-        ax.set_axis_off()
-
-        plt.tight_layout()
-        plt.draw()
-        plt.pause(0.01)
-
-# Training
 else:
     model.train()
 
     loader = SimulationLoader(args.dataset, shuffle=True)
+    # loader = SimulationLoader(args.dataset, shuffle=True, noise_scale=0.0)
+    # loader = list(iter(loader))[:10]
+
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer,
         lr_lambda = lambda s: lr_lambda(s, hyper)
     )
+
+    loss_fn = SelfSupervisedLoss()
 
     starting_epoch = 0
     checkpoints = sorted(list(args.checkpoints.glob('*.pt')))
@@ -107,18 +78,22 @@ else:
         for batch in tqdm(loader, desc='Warmup', file=sys.stdout):
             batch = batch.to(device)
             with torch.no_grad():
-                _ = model.supervised_loss(batch)
+                _ = model(batch)
+
+    #! Make sure it does not already exist !!
+    # output = open(Path(args.checkpoints, "loss_log.txt"), 'w')
+    # output.write("total_loss, L_inertia, L_gravity, L_bending, L_stretch\n")
 
     epochs = int(hyper['training']['steps'] / len(loader))
     for e in range(starting_epoch+1, epochs):
         loop = tqdm(loader, desc=f'Epoch {e:>3}/{epochs-1}', file=sys.stdout)
         loss_sum = 0
+
         for it, batch in enumerate(loop):
             optimizer.zero_grad()
             
             batch.to(device)
-            # loss = model.supervised_loss(batch)   #! should be an argument when running the script
-            loss = model.unsupervised_loss(batch)
+            loss = loss_fn(batch, model.forward_pass(batch))
             loss.backward()
 
             optimizer.step()
@@ -126,6 +101,9 @@ else:
 
             loss_sum += loss.item()
             loop.set_postfix({'Loss': f'{loss_sum/(it+1): .3f}'})
+        
+        # output.write(f'{loss_sum / (it+1)}, {", ".join(str(term / (it+1)) for term in loss_terms_sum)}\n')
+        # output.flush()
 
         if e % 10 == 0:
             save_epoch(Path(args.checkpoints, args.save_format), e, model, optimizer, scheduler)

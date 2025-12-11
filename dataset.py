@@ -32,13 +32,31 @@ def heterodata_from_npz(simulation: NpzFile, time_ind: int) -> HeteroData:
     prev_world = simulation['nodes'][:-2]
     next_world = simulation['nodes'][2:]
 
+    # Material / simulation constants (can be set arbitrarily when losses are synthetic)
+    lame_mu_val = 2.36e4
+    lame_lambda_val = 4.44e4
+    bending_coeff_val = 3.96e-5
+    density_val = 2.0022e-1
+    thickness_val = 4.7e-4
+    time_step_val = 4.0e-2
+
     sample = HeteroData()
+
+    # Material/Simulation parameters
+    sample.lame_mu = torch.tensor(lame_mu_val, dtype=torch.float32)
+    sample.lame_lambda = torch.tensor(lame_lambda_val, dtype=torch.float32)
+    sample.bending_coeff = torch.tensor(bending_coeff_val, dtype=torch.float32)
+    sample.density = torch.tensor(density_val, dtype=torch.float32)
+    sample.thickness = torch.tensor(thickness_val, dtype=torch.float32)
+    sample.time_step = torch.tensor(time_step_val, dtype=torch.float32)
     
     # ===== Nodes data
     sample[NODE].world_pos = torch.from_numpy(world_pos[time_ind]).float()
     sample[NODE].prev_world_pos = torch.from_numpy(prev_world[time_ind]).float()
     sample[NODE].next_world_pos = torch.from_numpy(next_world[time_ind]).float()
     sample[NODE].mesh_pos = torch.from_numpy(mesh_pos).float()
+
+    num_nodes = sample[NODE].mesh_pos.shape[0]
 
     sample[NODE].type = torch.from_numpy(simulation['node_type'][time_ind]).long()
     
@@ -51,8 +69,27 @@ def heterodata_from_npz(simulation: NpzFile, time_ind: int) -> HeteroData:
     # ===== Faces data
     sample.face_index = torch.from_numpy(faces).long()
 
+    # ===== Rest-state geometry helpers
+    face_vertices = sample[NODE].mesh_pos[sample.face_index]
+    face_cross = torch.cross(face_vertices[:, 1] - face_vertices[:, 0], face_vertices[:, 2] - face_vertices[:, 0], dim=1)
+    face_area = 0.5 * torch.linalg.norm(face_cross, dim=1, keepdim=True).clamp_min(1e-12)
+    sample[MESH].face_area = face_area
+
     # ===== Per-edge dihedral angles
     sample[MESH].theta_0 = compute_dihedral_angle(sample)
+
+    # ===== Per-node mass from face areas and density/thickness
+    vertex_mass = torch.zeros((num_nodes, 1), dtype=torch.float32)
+    face_mass = (density_val * thickness_val * face_area) / 3.0
+    for tri, m in zip(sample.face_index, face_mass):
+        vertex_mass[tri] += m
+    sample[NODE].v_mass = vertex_mass
+
+    # ===== Per-face inverse rest shape matrices
+    rest_vertices = sample[NODE].mesh_pos[sample.face_index]
+    rest_edges = torch.stack([rest_vertices[:, 0] - rest_vertices[:, 2], rest_vertices[:, 1] - rest_vertices[:, 2]], dim=1)
+    Dm = edges_3d_to_2d(rest_edges)
+    sample.Dm_inv = torch.linalg.inv(Dm)
 
     return sample
 

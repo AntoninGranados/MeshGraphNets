@@ -108,6 +108,7 @@ def compute_dihedral_angle(sample: HeteroData, positions: torch.Tensor | None = 
 
     return angles.repeat(2).float()
 
+'''
 def inv_mps(matrices: torch.Tensor) -> torch.Tensor:
     """
     There are issues with torch.linalg.inv with the MPS backend (the gradient might be NaN)
@@ -123,6 +124,7 @@ def inv_mps(matrices: torch.Tensor) -> torch.Tensor:
     inv[valid] = inv[valid] / det[valid].unsqueeze(-1).unsqueeze(-1)
 
     return inv
+'''
 
 def btrace(matrices: torch.Tensor) -> torch.Tensor:
     """
@@ -131,34 +133,44 @@ def btrace(matrices: torch.Tensor) -> torch.Tensor:
     """
     return matrices.diagonal(offset=0, dim1=-1, dim2=-2).sum(-1)
 
+def get_shape_matrix(vertices: torch.Tensor) -> torch.Tensor:
+    # Each face is represented by two edges anchored at the third vertex (as in HOOD)
+    return torch.stack([vertices[:, 0] - vertices[:, 2], vertices[:, 1] - vertices[:, 2]], dim=-1)  # [F, 3, 2]
+
+def edges_3d_to_2d(edges: torch.Tensor) -> torch.Tensor:
+    """
+    Project each pair of 3D edges (anchored at the third vertex) into a local 2D orthonormal basis.
+    `edges` is shaped [F, 2, 3] (e0, e1).
+    Returns projected edges shaped [F, 2, 2].
+    """
+    e0, e1 = edges[:, 0], edges[:, 1]
+
+    b0 = torch.nn.functional.normalize(e0, dim=-1)
+    n = torch.cross(b0, e1, dim=-1)
+    b1 = torch.cross(n, b0, dim=-1)
+    b1 = torch.nn.functional.normalize(b1, dim=-1)
+
+    edges2d = torch.zeros(edges.shape[0], 2, 2, device=edges.device, dtype=edges.dtype)
+    edges2d[:, 0, 0] = (e0 * b0).sum(-1)
+    edges2d[:, 0, 1] = (e0 * b1).sum(-1)
+    edges2d[:, 1, 0] = (e1 * b0).sum(-1)
+    edges2d[:, 1, 1] = (e1 * b1).sum(-1)
+    return edges2d
+
 def compute_green_strain(sample: HeteroData, positions: torch.Tensor) -> torch.Tensor:
     """
-    Compute the Green strain tensor for each triangular face using rest `mesh_pos` and current `positions`.
-    Returns a tensor of shape [num_faces, 3, 3].
+    Compute the Green strain tensor (2x2) for each triangular face using rest `mesh_pos`
+    and current `positions`, following the cloth formulation used in HOOD/SNUG.
+    Returns a tensor of shape [num_faces, 2, 2].
     """
-    mesh_pos: torch.Tensor = sample[NODE].mesh_pos
-    faces: torch.Tensor = sample.face_index
+    deformed_vertices = positions[sample.face_index]     # [F, 3, 3]
 
-    rest_vertices = mesh_pos[faces]          # [nb faces, 3, 3]
-    deformed_vertices = positions[faces]     # [nb faces, 3, 3]
+    def_edges = torch.stack([deformed_vertices[:, 0] - deformed_vertices[:, 2], deformed_vertices[:, 1] - deformed_vertices[:, 2]], dim=1)  # [F, 2, 3]
 
-    rest_edges = torch.stack((
-        rest_vertices[:, 1] - rest_vertices[:, 0],
-        rest_vertices[:, 2] - rest_vertices[:, 0]
-    ), dim=2)                                # [nb faces, 3, 2]
-    deformed_edges = torch.stack((
-        deformed_vertices[:, 1] - deformed_vertices[:, 0],
-        deformed_vertices[:, 2] - deformed_vertices[:, 0]
-    ), dim=2)                                # [nb faces, 3, 2]
+    Ds = edges_3d_to_2d(def_edges)    # [F, 2, 2]
 
-    # Pseudo-inverse of rest_edges (closed-form 2x2 inverse to stay on-device)
-    gram = torch.bmm(rest_edges.transpose(1, 2), rest_edges)  # [nb faces, 2, 2]
-    gram += 1e-6 * torch.eye(2, dtype=gram.dtype, device=gram.device)
-    gram_inv = inv_mps(gram)
-    rest_pinv = torch.bmm(gram_inv, rest_edges.transpose(1, 2))  # [nb faces, 2, 3]
+    F = torch.bmm(Ds, sample.Dm_inv)
+    C = torch.bmm(F.transpose(1, 2), F)
 
-    F = torch.bmm(deformed_edges, rest_pinv)  # [nb faces, 3, 3]   # Deformation gradient
-    C = torch.bmm(F.transpose(1, 2), F) # Cauchy-Green deformation tensor
-    
-    I = torch.eye(3, dtype=C.dtype, device=C.device)
+    I = torch.eye(2, dtype=C.dtype, device=C.device)
     return 0.5 * (C - I)

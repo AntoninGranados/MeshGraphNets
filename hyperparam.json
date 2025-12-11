@@ -6,7 +6,7 @@
     "training": {
         "steps": 500000,
 
-        "decay-steps": 0.5,
+        "decay-steps": 0.8,
         "decay-rate": 0.1,
         "start-lr": 1e-4,
         "min-lr": 1e-6
