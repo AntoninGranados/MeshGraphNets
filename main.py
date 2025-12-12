@@ -12,6 +12,7 @@ from network.model import Model
 from dataset import SimulationLoader
 from utils import *
 from loss.self_supervised_loss import SelfSupervisedLoss
+from loss.rollout_loss import RolloutLoss
 from rollout import rollout
 
 parser = argparse.ArgumentParser(
@@ -54,7 +55,7 @@ else:
         lr_lambda = lambda s: lr_lambda(s, hyper)
     )
 
-    loss_fn = SelfSupervisedLoss()
+    loss_fn = RolloutLoss(SelfSupervisedLoss(), 8)
 
     starting_epoch = 0
     checkpoints = sorted(list(args.checkpoints.glob('*.pt')))
@@ -81,8 +82,15 @@ else:
                 _ = model(batch)
 
     #! Make sure it does not already exist !!
-    # output = open(Path(args.checkpoints, "loss_log.txt"), 'w')
-    # output.write("total_loss, L_inertia, L_gravity, L_bending, L_stretch\n")
+    loss_log_path = Path(args.checkpoints, "loss_log.txt")
+    if loss_log_path.exists():
+        print(f"[WARN] `{loss_log_path}` already exists, do you want to continue ? If yes, it will be overwritten [y/N] ", end='')
+        res = input()
+        if res.lower() != 'y':
+            raise FileExistsError(f'`{loss_log_path}` already exists')
+    
+    output = open(loss_log_path, 'w')
+    output.write("total_loss, L_inertia, L_gravity, L_bending, L_stretch\n")
 
     epochs = int(hyper['training']['steps'] / len(loader))
     for e in range(starting_epoch+1, epochs):
@@ -93,7 +101,7 @@ else:
             optimizer.zero_grad()
             
             batch.to(device)
-            loss = loss_fn(batch, model.forward_pass(batch))
+            loss = loss_fn(model, batch)
             loss.backward()
 
             optimizer.step()
@@ -102,8 +110,8 @@ else:
             loss_sum += loss.item()
             loop.set_postfix({'Loss': f'{loss_sum/(it+1): .3f}'})
         
-        # output.write(f'{loss_sum / (it+1)}, {", ".join(str(term / (it+1)) for term in loss_terms_sum)}\n')
-        # output.flush()
+        output.write(f'{loss_sum / (it+1)}\n')
+        output.flush()
 
         if e % 10 == 0:
             save_epoch(Path(args.checkpoints, args.save_format), e, model, optimizer, scheduler)

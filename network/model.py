@@ -24,9 +24,9 @@ class Model(nn.Module):
         self.graph_net_blocks = torch.nn.ModuleList([GraphNetBlock() for _ in range(graph_net_blocks_count)])
         self.decoder = Decoder(output_size=output_size)
 
-    def normalize_graph(self, sample: HeteroData) -> HeteroData:
-        sample[NODE].features = self.node_normalizer(sample[NODE].features, self.training)
-        sample[MESH].features = self.edge_normalizer['mesh'](sample[MESH].features, self.training)
+    def normalize_graph(self, sample: HeteroData, accumulate_stats: bool = True) -> HeteroData:
+        sample[NODE].features = self.node_normalizer(sample[NODE].features, self.training and accumulate_stats)
+        sample[MESH].features = self.edge_normalizer['mesh'](sample[MESH].features, self.training and accumulate_stats)
 
         return sample
     
@@ -51,9 +51,9 @@ class Model(nn.Module):
 
         return sample
 
-    def forward_pass(self, sample: HeteroData) -> HeteroData:
+    def forward_pass(self, sample: HeteroData, accumulate_stats: bool = True) -> HeteroData:
         sample = self.compute_features(sample)
-        normalized_sample = self.normalize_graph(sample)
+        normalized_sample = self.normalize_graph(sample, self.training and accumulate_stats)
         latent_sample = self.encoder(normalized_sample)
 
         for _, graph_net_block in enumerate(self.graph_net_blocks):
@@ -61,7 +61,7 @@ class Model(nn.Module):
 
         output_sample = self.decoder(latent_sample)
         output_sample[NODE].features = self.output_normalizer.inverse(output_sample[NODE].features)
-        if self.training:   # Accumulate stats
+        if self.training and accumulate_stats:   # Accumulate stats only on real data
             self.output_normalizer.accumulate(sample[NODE].next_world_pos - 2*sample[NODE].world_pos + sample[NODE].prev_world_pos)
 
         return output_sample
@@ -84,6 +84,6 @@ class Model(nn.Module):
 
         return sample
 
-    def __call__(self, sample: HeteroData) -> HeteroData:
-        prediction = self.forward_pass(sample)
+    def __call__(self, sample: HeteroData, accumulate_stats: bool = True) -> HeteroData:
+        prediction = self.forward_pass(sample, accumulate_stats)
         return self.integrate_pos(sample, prediction)

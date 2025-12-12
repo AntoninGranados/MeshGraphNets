@@ -1,8 +1,10 @@
+from typing import override
+
 import torch
 from torch_geometric.data import HeteroData
 
-from utils import *
 from loss.loss import Loss
+from utils import *
 
 class SelfSupervisedLoss(Loss):
     def __init__(self):
@@ -16,7 +18,7 @@ class SelfSupervisedLoss(Loss):
         return L_inertia
     
     def __gravity(self, pred_pos, m, mask) -> torch.Tensor:
-        L_gravity = - m * self.g * pred_pos[:, 2]
+        L_gravity = m * self.g * pred_pos[:, 2]
         L_gravity = torch.sum(L_gravity[mask])
         return L_gravity
 
@@ -37,7 +39,8 @@ class SelfSupervisedLoss(Loss):
         L_stretch = torch.sum(area * thickness * energy_density)
         return L_stretch
 
-    def __call__(self, sample: HeteroData, prediction: HeteroData) -> torch.Tensor:
+    @override
+    def compute(self, sample: HeteroData, prediction: HeteroData) -> torch.Tensor:
         m = sample[NODE].v_mass.squeeze(-1)
         
         pos = sample[NODE].world_pos

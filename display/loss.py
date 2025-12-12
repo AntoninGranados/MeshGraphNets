@@ -42,7 +42,7 @@ plt.rcParams["font.family"] = "monospace"
 fignum = fig.number
 
 while plt.fignum_exists(fignum):
-    file = open(Path(".", "checkpoints", "flag-gravity-unsupervised", "loss_log.txt"), "r")
+    file = open(Path(".", "checkpoints", "flag-gravity-test", "loss_log.txt"), "r")
     lines = file.readlines()
     file.close()
 
@@ -51,7 +51,12 @@ while plt.fignum_exists(fignum):
         loss_terms.append(list(map(float, l.strip().split(", "))))
     loss_terms = np.array(loss_terms)
 
+
     plt.clf()
+    plt.plot(loss_terms[:, 0], "r", label="Total Loss")
+    plt.semilogy()
+
+    """
     gs = fig.add_gridspec(2, 4, height_ratios=[2, 1])
 
     ax_main = fig.add_subplot(gs[0, :])
@@ -67,6 +72,7 @@ while plt.fignum_exists(fignum):
         # ax.semilogy()
         ax.set_title(label, fontsize=8)
         ax.tick_params(axis="both", which="both", labelsize=7)
+    """
 
     plt.draw()
     plt.pause(30)

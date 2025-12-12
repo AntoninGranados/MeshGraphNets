@@ -1,14 +1,17 @@
+from typing import override
+
 import torch
 from torch_geometric.data import HeteroData
 
-from utils import *
 from loss.loss import Loss
+from utils import *
 
 class SupervisedLoss(Loss):
     def __init__(self):
         self.loss_fn = torch.nn.MSELoss()
-
-    def __call__(self, sample: HeteroData, prediction: HeteroData) -> torch.Tensor:
+    
+    @override
+    def compute(self, sample: HeteroData, prediction: HeteroData) -> torch.Tensor:
         pred_acc = prediction[NODE].features
 
         pos = sample[NODE].world_pos

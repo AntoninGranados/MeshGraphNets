@@ -13,14 +13,16 @@ class Normalizer(torch.nn.Module):
         self.register_buffer('acc_sum_sqr', torch.zeros(size))
         
     def accumulate(self, data: torch.Tensor) -> None:
-        flat_data = data.reshape([-1, data.shape[-1]])
-        batch_count = flat_data.shape[0]
-        sum = torch.sum(flat_data, dim=0)
-        sum_sqr = torch.sum(torch.square(flat_data), dim=0)
+        # Running stats must not build autograd graphs; detach and update buffers under no_grad
+        with torch.no_grad():
+            flat_data = data.detach().reshape([-1, data.shape[-1]])
+            batch_count = flat_data.shape[0]
+            sum_val = torch.sum(flat_data, dim=0)
+            sum_sqr = torch.sum(torch.square(flat_data), dim=0)
 
-        self.acc_count = torch.add(self.acc_count, batch_count)
-        self.acc_sum = torch.add(self.acc_sum, sum)
-        self.acc_sum_sqr = torch.add(self.acc_sum_sqr, sum_sqr)
+            self.acc_count += batch_count
+            self.acc_sum += sum_val
+            self.acc_sum_sqr += sum_sqr
 
     def mean(self):
         safe_count = torch.clamp(self.acc_count, min=1)
