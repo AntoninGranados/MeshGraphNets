@@ -55,10 +55,11 @@ else:
         lr_lambda = lambda s: lr_lambda(s, hyper)
     )
 
-    loss_fn = RolloutLoss(SelfSupervisedLoss(), 8)
+    loss_fn = RolloutLoss(SelfSupervisedLoss(), 4)
 
     starting_epoch = 0
     checkpoints = sorted(list(args.checkpoints.glob('*.pt')))
+    # Load the checkpoint if it exists
     if len(checkpoints) > 0:
         print(f"[WARN] checkpoints already exist, do you want to continue ? If yes, the last checkpoint will be loaded [y/N] ", end='')
         res = input()
@@ -75,23 +76,22 @@ else:
         scheduler.load_state_dict(ckp['scheduler_state_dict'])
         print(f"[INFO] Loaded checkpoint '{checkpoints[-1].name}'")
 
+    # Load log file for the loss
+    loss_log_path = Path(args.checkpoints, "loss_log.txt")
+    if loss_log_path.exists():
+        output = open(loss_log_path, 'a')
+    else:
+        output = open(loss_log_path, 'w')
+        output.write("total_loss, L_inertia, L_gravity, L_bending, L_stretch\n")
+
+    # Warmup
     if starting_epoch == 0:
         for batch in tqdm(loader, desc='Warmup', file=sys.stdout):
             batch = batch.to(device)
             with torch.no_grad():
                 _ = model(batch)
 
-    #! Make sure it does not already exist !!
-    loss_log_path = Path(args.checkpoints, "loss_log.txt")
-    if loss_log_path.exists():
-        print(f"[WARN] `{loss_log_path}` already exists, do you want to continue ? If yes, it will be overwritten [y/N] ", end='')
-        res = input()
-        if res.lower() != 'y':
-            raise FileExistsError(f'`{loss_log_path}` already exists')
-    
-    output = open(loss_log_path, 'w')
-    output.write("total_loss, L_inertia, L_gravity, L_bending, L_stretch\n")
-
+    # Training loop
     epochs = int(hyper['training']['steps'] / len(loader))
     for e in range(starting_epoch+1, epochs):
         loop = tqdm(loader, desc=f'Epoch {e:>3}/{epochs-1}', file=sys.stdout)

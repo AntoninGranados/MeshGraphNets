@@ -9,6 +9,7 @@ from utils import *
 
 class RolloutLoss(Loss):
     def __init__(self, step_loss_fn: Loss, rollout_steps: int):
+        assert rollout_steps > 0, "The number of rollout steps need to be strictly positive"
         self.step_loss_fn = step_loss_fn
         self.rollout_steps = rollout_steps
 
@@ -25,4 +26,5 @@ class RolloutLoss(Loss):
             # Update current_sample for next step
             current_sample = model.integrate_pos(current_sample, prediction)
 
+        total_loss /= self.rollout_steps
         return total_loss
