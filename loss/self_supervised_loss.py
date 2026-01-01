@@ -1,4 +1,5 @@
-from typing import override
+from compatibility import override
+from enum import IntEnum
 
 import torch
 from torch_geometric.data import HeteroData
@@ -7,8 +8,21 @@ from loss.loss import Loss
 from utils import *
 
 class SelfSupervisedLoss(Loss):
+    class LossTerms(IntEnum):
+        Total = 0
+        Inertia = 1
+        Gravity = 2
+        Bending = 3
+        Stretch = 4
+        Count = 5
+
     def __init__(self):
         self.g = 9.81
+        self._loss_terms = torch.empty((SelfSupervisedLoss.LossTerms.Count,))
+
+    @override
+    def get_loss_terms(self) -> torch.Tensor:
+        return self._loss_terms
 
     def __inertia(self, pred_pos, pos, vel, m, dt, mask) -> torch.Tensor:
         x_hat = pos + vel
@@ -63,18 +77,21 @@ class SelfSupervisedLoss(Loss):
             sample.time_step,
             normal_mask
         )
+        self._loss_terms[SelfSupervisedLoss.LossTerms.Inertia] = torch.detach(L_inertia)
 
         L_gravity = self.__gravity(
             pred_pos,
             m,
             normal_mask
         )
+        self._loss_terms[SelfSupervisedLoss.LossTerms.Gravity] = torch.detach(L_gravity)
 
         L_bending = self.__bending(
             compute_dihedral_angle(sample, pred_pos),
             sample[MESH].theta_0,
             sample.bending_coeff
         )
+        self._loss_terms[SelfSupervisedLoss.LossTerms.Bending] = torch.detach(L_bending)
 
         L_stretch = self.__stretching(
             compute_green_strain(sample, pred_pos),
@@ -83,7 +100,9 @@ class SelfSupervisedLoss(Loss):
             sample[MESH].face_area.squeeze(-1),
             sample.thickness
         )
+        self._loss_terms[SelfSupervisedLoss.LossTerms.Stretch] = torch.detach(L_stretch)
 
         L_static = L_gravity + L_bending + L_stretch
         L_total = L_inertia + L_static
+        self._loss_terms[SelfSupervisedLoss.LossTerms.Total] = torch.detach(L_total)
         return L_total

@@ -3,6 +3,7 @@ import numpy as np
 from pathlib import Path
 from enum import IntEnum
 from torch_geometric.data import HeteroData
+from compatibility import LRScheduler, stable_argsort
 
 class NodeType(IntEnum):
     NORMAL = 0
@@ -24,7 +25,7 @@ def save_epoch(
     epoch: int,
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
-    scheduler: torch.optim.lr_scheduler.LRScheduler
+    scheduler: LRScheduler
 ):
     parsed_path = str(path).replace('[e]', f'{epoch:03}')
     print(f"Saving checkpoint to `{parsed_path}`")
@@ -83,7 +84,7 @@ def compute_dihedral_angle(sample: HeteroData, positions: torch.Tensor | None = 
     num_nodes = mesh_pos.shape[0]
     edge_keys = face_edges[:, 0] * num_nodes + face_edges[:, 1]
 
-    order = torch.argsort(edge_keys, stable=True)
+    order = stable_argsort(edge_keys)
     sorted_keys = edge_keys[order]
     sorted_faces_for_edges = face_ids[order]
 

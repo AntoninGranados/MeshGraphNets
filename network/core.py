@@ -4,6 +4,7 @@ from torch import nn
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import MessagePassing
 from utils import *
+from compatibility import inspect_signature, get_flat_param_names, collect_param_data, get_message_passing_attr
 
 class MLP(nn.Module):
     def __init__(self, widths, layer_norm: bool = True):
@@ -68,9 +69,10 @@ class GraphNetBlock(MessagePassing):
         self.node_mlp = make_mlp(2 * latent_size, latent_size)  # [features, aggregated] -> latent
         self.edge_mlp = make_mlp(3 * latent_size, latent_size)  # [features_i, features_j, edge_features] -> latent
 
-        self.inspector.inspect_signature(self.message_mesh)
+        inspect_signature(self.inspector, self.message_mesh)
 
-        self._user_args = self.inspector.get_flat_param_names(
+        self._user_args = get_flat_param_names(
+            self.inspector,
             ['message_mesh', 'aggregate', 'update'], exclude=list(self.special_args))
 
     def forward(self, sample):
@@ -86,20 +88,21 @@ class GraphNetBlock(MessagePassing):
     def update_mesh_edge_features(self, sample):
         edge_index = sample[MESH].edge_index
         node_features = sample[NODE].features
-        size = self._check_input(edge_index, None)
+        # size = self._check_input(edge_index, None)
+        size = get_message_passing_attr(self, 'check_input')(edge_index, None)
 
-        coll_dict = self._collect(
+        coll_dict = get_message_passing_attr(self, 'collect')(
             set(self._user_args), edge_index, size,
             dict(node_features=node_features)
         )
         coll_dict['edge_features'] = sample[MESH].features
 
-        msg_kwargs = self.inspector.collect_param_data('message_mesh', coll_dict)
+        msg_kwargs = collect_param_data(self.inspector, 'message_mesh', coll_dict)
         return self.message_mesh(**msg_kwargs)
 
     def aggregate_nodes(self, edge_features, edge_index, user_args, size, **kwargs):
-        coll_dict = self._collect(user_args, edge_index, size, kwargs)
-        aggr_kwargs = self.inspector.collect_param_data('aggregate', coll_dict)
+        coll_dict = get_message_passing_attr(self, 'collect')(user_args, edge_index, size, kwargs)
+        aggr_kwargs = collect_param_data(self.inspector, 'aggregate', coll_dict)
         return self.aggregate(edge_features, **aggr_kwargs)
 
     def update(self, aggregated_features_mesh, features):
@@ -110,7 +113,11 @@ class GraphNetBlock(MessagePassing):
         N = sample['node'].features.shape[0]
         mesh_edge_features_updated = self.update_mesh_edge_features(sample)
 
-        aggr_args = self.inspector.get_flat_param_names(['aggregate'], exclude=list(self.special_args))
+        aggr_args = get_flat_param_names(
+            self.inspector,
+            ['aggregate'],
+            exclude=list(self.special_args),
+        )
         mesh_edge_index = sample[MESH].edge_index
         mesh_size = (N, N)
 

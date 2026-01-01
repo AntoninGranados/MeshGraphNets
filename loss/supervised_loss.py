@@ -1,4 +1,4 @@
-from typing import override
+from compatibility import override
 
 import torch
 from torch_geometric.data import HeteroData
@@ -8,7 +8,11 @@ from utils import *
 
 class SupervisedLoss(Loss):
     def __init__(self):
-        self.loss_fn = torch.nn.MSELoss()
+        self._loss_fn = torch.nn.MSELoss()
+        self._loss_terms = torch.empty((1,))
+
+    def get_loss_terms(self) -> torch.Tensor:
+        return self._loss_terms
     
     @override
     def compute(self, sample: HeteroData, prediction: HeteroData) -> torch.Tensor:
@@ -22,5 +26,6 @@ class SupervisedLoss(Loss):
         normal_mask = sample[NODE].type == NodeType.NORMAL
         normal_mask = normal_mask.squeeze(-1)
 
-        loss = self.loss_fn(pred_acc[normal_mask], target_acc[normal_mask])
+        loss = self._loss_fn(pred_acc[normal_mask], target_acc[normal_mask])
+        self._loss_terms = torch.detach(loss)
         return loss

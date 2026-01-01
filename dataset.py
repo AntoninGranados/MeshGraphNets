@@ -10,6 +10,7 @@ from torch_geometric.data import HeteroData, InMemoryDataset
 from torch_geometric.loader import DataLoader
 
 from utils import *
+from compatibility import load_weight_only
 
 def faces_to_edges(faces: np.ndarray) -> torch.Tensor:
     faces = np.sort(faces, axis=-1)
@@ -103,8 +104,7 @@ class SimulationDataset(InMemoryDataset):
     ):
         super().__init__(str(root))
 
-        # weights_only=False because I generated the data (I trust it)
-        self.data, self.slices = torch.load(self.processed_paths[0], weights_only=False)
+        self.data, self.slices = load_weight_only(self.processed_paths[0])
 
         self.noise_scale = noise_scale
         self.noise_gamma = noise_gamma

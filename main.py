@@ -55,7 +55,7 @@ else:
         lr_lambda = lambda s: lr_lambda(s, hyper)
     )
 
-    loss_fn = RolloutLoss(SelfSupervisedLoss(), 4)
+    loss_fn = RolloutLoss(SelfSupervisedLoss(), 8)
 
     starting_epoch = 0
     checkpoints = sorted(list(args.checkpoints.glob('*.pt')))
@@ -82,7 +82,7 @@ else:
         output = open(loss_log_path, 'a')
     else:
         output = open(loss_log_path, 'w')
-        output.write("total_loss, L_inertia, L_gravity, L_bending, L_stretch\n")
+        # output.write("total_loss, L_inertia, L_gravity, L_bending, L_stretch\n")
 
     # Warmup
     if starting_epoch == 0:
@@ -95,7 +95,7 @@ else:
     epochs = int(hyper['training']['steps'] / len(loader))
     for e in range(starting_epoch+1, epochs):
         loop = tqdm(loader, desc=f'Epoch {e:>3}/{epochs-1}', file=sys.stdout)
-        loss_sum = 0
+        loss_sum = torch.empty_like(loss_fn.get_loss_terms())
 
         for it, batch in enumerate(loop):
             optimizer.zero_grad()
@@ -107,10 +107,12 @@ else:
             optimizer.step()
             scheduler.step()
 
-            loss_sum += loss.item()
-            loop.set_postfix({'Loss': f'{loss_sum/(it+1): .3f}'})
+            loss_sum += loss_fn.get_loss_terms()
+            loop.set_postfix({'Loss': f'{loss_sum[0]/(it+1): .3f}'})
         
-        output.write(f'{loss_sum / (it+1)}\n')
+        mean_loss = loss_sum / (it+1)
+        repr_loss = ", ".join(map(str, map(float, list(mean_loss))))
+        output.write(f'{repr_loss}\n')
         output.flush()
 
         if e % 10 == 0:

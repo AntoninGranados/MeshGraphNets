@@ -8,6 +8,9 @@ class Loss():
     def __init__(self):
         pass
 
+    def get_loss_terms(self) -> torch.Tensor:
+        raise NotImplementedError 
+
     def compute(self, sample: HeteroData, prediction: HeteroData) -> torch.Tensor:
         raise NotImplementedError
     
