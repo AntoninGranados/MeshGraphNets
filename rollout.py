@@ -9,6 +9,7 @@ import torch
 from network.model import Model
 from dataset import SimulationLoader
 from utils import *
+from compatibility import load_weight_only
 
 def rollout(args: argparse.Namespace, model: Model, device: torch.device) -> None:
     model.eval()
@@ -17,7 +18,7 @@ def rollout(args: argparse.Namespace, model: Model, device: torch.device) -> Non
     else:
         ckp = args.rollout
 
-    state = torch.load(ckp, map_location=device)
+    state = load_weight_only(ckp, map_location=device)
     model.load_state_dict(state['model_state_dict'])
     print(f'[INFO] Rollout on `{ckp}` for {args.roll_length} time steps')
 
@@ -42,9 +43,9 @@ def rollout(args: argparse.Namespace, model: Model, device: torch.device) -> Non
             triangles=data.face_index,
             color=(1.,1.,1.,1.), # edgecolor=(0.,0.,0.,0.3), linewidth=0.5
         )
-        ax.set_xlim([-0.5, 3.5])
-        ax.set_ylim([-0.5, 2.5])
-        ax.set_zlim([-1.5, 1.5])
+        # ax.set_xlim([-0.5, 3.5])
+        # ax.set_ylim([-0.5, 2.5])
+        # ax.set_zlim([-1.5, 1.5])
         ax.set_aspect('equal')
         ax.set_axis_off()
 
@@ -59,9 +60,9 @@ def rollout(args: argparse.Namespace, model: Model, device: torch.device) -> Non
         fig.patch.set_alpha(0.2)
 
         plt.tight_layout()
-        # plt.draw()
-        # plt.pause(0.01)
+        plt.draw()
+        plt.pause(0.01)
 
-        # plt.savefig(f"img/frame_{i:03}.png", dpi=400)
+        plt.savefig(f"img/frame_{i:03}.png", dpi=400)
 
         

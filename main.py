@@ -12,7 +12,7 @@ from network.model import Model
 from dataset import SimulationLoader
 from utils import *
 from loss.self_supervised_loss import SelfSupervisedLoss
-from loss.rollout_loss import RolloutLoss
+from loss.autoreg_loss import AutoRegressiveLoss, ScheduledAutoRegressiveLoss, HOOD_rollout_steps_func, MGN_RP_rollout_steps_func
 from rollout import rollout
 
 parser = argparse.ArgumentParser(
@@ -55,7 +55,15 @@ else:
         lr_lambda = lambda s: lr_lambda(s, hyper)
     )
 
-    loss_fn = RolloutLoss(SelfSupervisedLoss(), 8)
+    # loss_fn = AutoRegressiveLoss(SelfSupervisedLoss(), 5)
+    loss_fn = ScheduledAutoRegressiveLoss(
+        SelfSupervisedLoss(),
+        MGN_RP_rollout_steps_func,
+        {
+            'total steps': hyper['training']['steps'],
+            'max rollout': 30
+        }
+    )
 
     starting_epoch = 0
     checkpoints = sorted(list(args.checkpoints.glob('*.pt')))
@@ -70,7 +78,7 @@ else:
 
         starting_epoch = int(ckp.get('epoch', 0))
 
-        model.load_state_dict(ckp['model_state_dict']) 
+        model.load_state_dict(ckp['model_state_dict'])
         optimizer.load_state_dict(ckp['optimizer_state_dict'])
         # FIXME: might be better (and lighter when saving) to simply create the scheduler using the `last_epoch` field
         scheduler.load_state_dict(ckp['scheduler_state_dict'])
@@ -95,7 +103,7 @@ else:
     epochs = int(hyper['training']['steps'] / len(loader))
     for e in range(starting_epoch+1, epochs):
         loop = tqdm(loader, desc=f'Epoch {e:>3}/{epochs-1}', file=sys.stdout)
-        loss_sum = torch.empty_like(loss_fn.get_loss_terms())
+        loss_sum = torch.zeros_like(loss_fn.get_loss_terms())
 
         for it, batch in enumerate(loop):
             optimizer.zero_grad()

@@ -1,3 +1,4 @@
+from typing import Any
 try:
     from typing import override
 except ImportError:
@@ -37,7 +38,7 @@ def get_flat_param_names(inspector, fn_names, exclude=None):
         return list(param)
 
 
-def collect_param_data(inspector, fn_name, kwargs):
+def collect_param_data(inspector, fn_name, kwargs) -> dict[str, Any] | Any:
     if hasattr(inspector, 'collect_param_data'):
         return inspector.collect_param_data(fn_name, kwargs)
     if hasattr(inspector, 'params') and fn_name in inspector.params:
@@ -57,14 +58,14 @@ def stable_argsort(tensor, dim: int=-1):
         return torch.argsort(tensor, dim=dim)
 
 
-def load_weight_only(f):
+def load_weight_only(f, map_location = None):
     """
     The default value was changed in newer pytorch version, and they added the param 'weights_only'
     """
     try:
-        return torch.load(f, weights_only=False)
+        return torch.load(f, map_location, weights_only=False)
     except TypeError:
-        return torch.load(f)
+        return torch.load(f, map_location)
     
 
 def get_message_passing_attr(block, attr: str):
